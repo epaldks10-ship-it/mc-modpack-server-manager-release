@@ -7,7 +7,14 @@
     [string]$ServersDir = '',
     [string]$StatusFile = '',  # written with ok/fail when done (read by manager.ps1)
     [switch]$NoPause,
-    [switch]$Update            # $Name is an existing server: install the new version beside it, carry the world over, swap
+    [switch]$Update,           # $Name is an existing server: install the new version beside it, carry the world over, swap
+    # -Client: set up the GAME side instead of a server (same modpack in the official Minecraft Launcher)
+    [switch]$Client,
+    [string]$GameDir = '',     # where the game files go (<root>\game\<name>)
+    [string]$FromServer = '',  # host on the same PC: take the files from this server folder instead of downloading
+    [string]$Address = 'localhost',
+    [string]$AddedMods = '',   # friend: base64 JSON [{p: modrinthProjectId, f: fileName}, ...] the host added by hand
+    [int]$GameRamGB = 6
 )
 # Installs one modpack server into <root>\servers\<Name>.
 # Shared runtimes live in <root>\_program (java\<major>, playit, cache).
@@ -302,10 +309,390 @@ function Merge-FromOldServer {
 }
 
 # ---------------------------------------------------------------------------
+# Game side (-Client): the same modpack the server runs, as an installation in the official Minecraft Launcher.
+# Logging in stays with the launcher and the player's own Microsoft account; nothing here ever sees a password.
+$ClientDirs = @('config', 'defaultconfigs', 'kubejs', 'resourcepacks', 'shaderpacks', 'patchouli_books', 'global_packs', 'configureddefaults', 'openloader')
+
+function Add-NbtHelper {
+    if ('McsmNbt' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text;
+// Just enough NBT to add one entry to servers.dat (the in-game server list) and keep everything else in it as it was
+public static class McsmNbt {
+    class Tag { public byte Type; public string Name; public object Value; }
+    class ListVal { public byte ElemType; public List<object> Items = new List<object>(); }
+    static string ReadStr(BinaryReader r) { int n = (r.ReadByte() << 8) | r.ReadByte(); return Encoding.UTF8.GetString(r.ReadBytes(n)); }
+    static void WriteStr(BinaryWriter w, string s) { byte[] b = Encoding.UTF8.GetBytes(s); w.Write((byte)(b.Length >> 8)); w.Write((byte)b.Length); w.Write(b); }
+    static byte[] Be(BinaryReader r, int n) { byte[] b = r.ReadBytes(n); Array.Reverse(b); return b; }
+    static void WBe(BinaryWriter w, byte[] b) { Array.Reverse(b); w.Write(b); }
+    static object ReadPayload(BinaryReader r, byte t) {
+        switch (t) {
+            case 1: return r.ReadByte();
+            case 2: return BitConverter.ToInt16(Be(r, 2), 0);
+            case 3: return BitConverter.ToInt32(Be(r, 4), 0);
+            case 4: return BitConverter.ToInt64(Be(r, 8), 0);
+            case 5: return BitConverter.ToSingle(Be(r, 4), 0);
+            case 6: return BitConverter.ToDouble(Be(r, 8), 0);
+            case 7: { int n = BitConverter.ToInt32(Be(r, 4), 0); return r.ReadBytes(n); }
+            case 8: return ReadStr(r);
+            case 9: { var l = new ListVal(); l.ElemType = r.ReadByte(); int n = BitConverter.ToInt32(Be(r, 4), 0); for (int i = 0; i < n; i++) l.Items.Add(ReadPayload(r, l.ElemType)); return l; }
+            case 10: { var c = new List<Tag>(); while (true) { byte tt = r.ReadByte(); if (tt == 0) break; var tag = new Tag(); tag.Type = tt; tag.Name = ReadStr(r); tag.Value = ReadPayload(r, tt); c.Add(tag); } return c; }
+            case 11: { int n = BitConverter.ToInt32(Be(r, 4), 0); var a = new int[n]; for (int i = 0; i < n; i++) a[i] = BitConverter.ToInt32(Be(r, 4), 0); return a; }
+            case 12: { int n = BitConverter.ToInt32(Be(r, 4), 0); var a = new long[n]; for (int i = 0; i < n; i++) a[i] = BitConverter.ToInt64(Be(r, 8), 0); return a; }
+        }
+        throw new InvalidDataException("unknown NBT tag " + t);
+    }
+    static void WritePayload(BinaryWriter w, byte t, object v) {
+        switch (t) {
+            case 1: w.Write((byte)v); break;
+            case 2: WBe(w, BitConverter.GetBytes((short)v)); break;
+            case 3: WBe(w, BitConverter.GetBytes((int)v)); break;
+            case 4: WBe(w, BitConverter.GetBytes((long)v)); break;
+            case 5: WBe(w, BitConverter.GetBytes((float)v)); break;
+            case 6: WBe(w, BitConverter.GetBytes((double)v)); break;
+            case 7: { var b = (byte[])v; WBe(w, BitConverter.GetBytes(b.Length)); w.Write(b); break; }
+            case 8: WriteStr(w, (string)v); break;
+            case 9: { var l = (ListVal)v; w.Write(l.ElemType); WBe(w, BitConverter.GetBytes(l.Items.Count)); foreach (var o in l.Items) WritePayload(w, l.ElemType, o); break; }
+            case 10: { foreach (var tag in (List<Tag>)v) { w.Write(tag.Type); WriteStr(w, tag.Name); WritePayload(w, tag.Type, tag.Value); } w.Write((byte)0); break; }
+            case 11: { var a = (int[])v; WBe(w, BitConverter.GetBytes(a.Length)); foreach (var x in a) WBe(w, BitConverter.GetBytes(x)); break; }
+            case 12: { var a = (long[])v; WBe(w, BitConverter.GetBytes(a.Length)); foreach (var x in a) WBe(w, BitConverter.GetBytes(x)); break; }
+        }
+    }
+    static Tag Find(List<Tag> c, string name) { foreach (var t in c) if (t.Name == name) return t; return null; }
+    static List<Tag> Load(string path) {
+        if (!File.Exists(path)) return new List<Tag>();
+        using (var r = new BinaryReader(File.OpenRead(path))) {
+            if (r.ReadByte() != 10) return new List<Tag>();
+            ReadStr(r); return (List<Tag>)ReadPayload(r, 10);
+        }
+    }
+    // Puts {name, ip} first in the list, replacing an older entry of the same name
+    public static void UpsertServer(string path, string name, string ip) {
+        List<Tag> root;
+        try { root = Load(path); } catch { root = new List<Tag>(); }
+        Tag servers = Find(root, "servers");
+        if (servers == null || servers.Type != 9 || (((ListVal)servers.Value).Items.Count > 0 && ((ListVal)servers.Value).ElemType != 10)) {
+            root.RemoveAll(x => x.Name == "servers");
+            servers = new Tag(); servers.Type = 9; servers.Name = "servers"; var lv = new ListVal(); lv.ElemType = 10; servers.Value = lv;
+            root.Add(servers);
+        }
+        var list = (ListVal)servers.Value; list.ElemType = 10;
+        list.Items.RemoveAll(o => { var n = Find((List<Tag>)o, "name"); return n != null && n.Value as string == name; });
+        var entry = new List<Tag>();
+        var ipTag = new Tag(); ipTag.Type = 8; ipTag.Name = "ip"; ipTag.Value = ip; entry.Add(ipTag);
+        var nameTag = new Tag(); nameTag.Type = 8; nameTag.Name = "name"; nameTag.Value = name; entry.Add(nameTag);
+        list.Items.Insert(0, entry);
+        string tmp = path + ".tmp";
+        using (var w = new BinaryWriter(File.Create(tmp))) { w.Write((byte)10); WriteStr(w, ""); WritePayload(w, 10, root); }
+        if (File.Exists(path)) File.Copy(path, path + "_old", true);
+        File.Copy(tmp, path, true); File.Delete(tmp);
+    }
+    public static string[] ListServers(string path) {
+        var res = new List<string>();
+        Tag servers = Find(Load(path), "servers");
+        if (servers != null && servers.Type == 9)
+            foreach (var o in ((ListVal)servers.Value).Items) {
+                var c = o as List<Tag>; if (c == null) continue;
+                var n = Find(c, "name"); var i = Find(c, "ip");
+                res.Add((n == null ? "" : (string)n.Value) + "|" + (i == null ? "" : (string)i.Value));
+            }
+        return res.ToArray();
+    }
+}
+'@
+}
+
+function Get-McDir {
+    $mc = Join-Path $env:APPDATA '.minecraft'
+    if ($env:MCSM_MCDIR) { $mc = $env:MCSM_MCDIR }   # the simulator points this at a throwaway folder
+    if (-not (Test-Path -LiteralPath (Join-Path $mc 'launcher_profiles.json'))) {
+        throw '공식 마인크래프트 런처를 찾지 못했어요. https://www.minecraft.net/download 에서 런처를 설치하고, 한 번 켜서 로그인한 다음 다시 해 주세요.'
+    }
+    return $mc
+}
+
+function Copy-Tree([string]$from, [string]$to) {
+    # robocopy copes with paths past the 260-character limit; exit codes below 8 mean success
+    & robocopy.exe $from $to /E /NFL /NDL /NJH /NJS /NP /R:2 /W:1 | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "파일을 복사하지 못했어요: $from" }
+}
+
+function Get-LoaderInstaller($li) {
+    # Same cached installer the server install uses; the game install only needs it once per loader version
+    $fv = "$($li.mc)-$($li.version)"
+    if ($li.loader -eq 'forge') {
+        $inst = Join-Path $Cache "forge-$fv-installer.jar"
+        $base = "https://maven.minecraftforge.net/net/minecraftforge/forge/$fv/forge-$fv-installer.jar"
+    }
+    else {
+        $inst = Join-Path $Cache "neoforge-$($li.version)-installer.jar"
+        $base = "https://maven.neoforged.net/releases/net/neoforged/neoforge/$($li.version)/neoforge-$($li.version)-installer.jar"
+    }
+    $sha1 = (Invoke-Curl -s -L --fail "$base.sha1")
+    Get-Download $base $inst -Sha1 "$sha1".Trim()
+    return $inst
+}
+
+function Read-LauncherProfiles([string]$mcDir) { return Get-Content -LiteralPath (Join-Path $mcDir 'launcher_profiles.json') -Raw -Encoding UTF8 | ConvertFrom-Json }
+function Save-LauncherProfiles([string]$mcDir, $j) {
+    [IO.File]::WriteAllText((Join-Path $mcDir 'launcher_profiles.json'), ($j | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
+}
+
+function Install-ClientLoader($li, [string]$mcDir) {
+    $mc = $li.mc; $v = $li.version
+    switch ($li.loader) {
+        'forge' { $vid = "$mc-forge-$v"; $theirs = 'forge' }
+        'neoforge' { $vid = "neoforge-$v"; $theirs = 'NeoForge' }
+        'fabric' { $vid = "fabric-loader-$v-$mc"; $theirs = '' }
+        default { throw "$($li.loader) 로더는 아직 지원하지 않아요." }
+    }
+    $vjson = Join-Path $mcDir "versions\$vid\$vid.json"
+    if (Test-Path -LiteralPath $vjson) { Info "$vid 은(는) 이미 설치돼 있어요."; return $vid }
+    Step "$($li.loader) $v 게임용으로 설치 중 (마인크래프트 $mc)"
+    if ($li.loader -eq 'fabric') {
+        # The launcher downloads Fabric's libraries itself from the URLs in this file
+        New-Item -ItemType Directory -Force (Split-Path $vjson -Parent) | Out-Null
+        $json = (Invoke-WebRequest -UseBasicParsing "https://meta.fabricmc.net/v2/versions/loader/$mc/$v/profile/json" -TimeoutSec 30).Content
+        [IO.File]::WriteAllText($vjson, $json, (New-Object Text.UTF8Encoding($false)))
+        return $vid
+    }
+    $had = @((Read-LauncherProfiles $mcDir).profiles.PSObject.Properties.Name) -contains $theirs
+    $inst = Get-LoaderInstaller $li
+    $java = Get-Java (Get-JavaMajor $mc)
+    $log = Join-Path $Cache "game-install-$vid.log"
+    $p = Start-Process -FilePath $java -ArgumentList @('-jar', "`"$inst`"", '--installClient', "`"$mcDir`"") -WorkingDirectory $Cache `
+        -NoNewWindow -Wait -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+    if ($p.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $vjson)) { throw "게임용 $($li.loader) 설치에 실패했어요. 인터넷을 확인하고 다시 해 주세요. (기록: $log)" }
+    Remove-Item -LiteralPath "$log.err" -ErrorAction SilentlyContinue
+    # The installer adds its own bare "forge"/"NeoForge" entry; ours is the one to pick, so a beginner sees one clear choice
+    if (-not $had) {
+        $j = Read-LauncherProfiles $mcDir
+        if ($j.profiles.PSObject.Properties[$theirs]) { $j.profiles.PSObject.Properties.Remove($theirs); Save-LauncherProfiles $mcDir $j }
+    }
+    return $vid
+}
+
+function Set-LauncherProfile([string]$mcDir, [string]$key, [string]$label, [string]$vid, [string]$gameDir, [int]$ramGB) {
+    $j = Read-LauncherProfiles $mcDir
+    if (-not $j.profiles) { $j | Add-Member -NotePropertyName profiles -NotePropertyValue ([pscustomobject]@{}) -Force }
+    $now = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+    $created = $now; $old = $j.profiles.PSObject.Properties[$key]; if ($old -and $old.Value.created) { $created = $old.Value.created }
+    # "lastUsed = now" puts it at the top of the launcher's installation list
+    $prof = [pscustomobject][ordered]@{
+        name = $label; type = 'custom'; created = $created; lastUsed = $now; lastVersionId = $vid; gameDir = $gameDir; icon = 'Crafting_Table'
+        javaArgs = "-Xmx${ramGB}G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M"
+    }
+    $j.profiles | Add-Member -NotePropertyName $key -NotePropertyValue $prof -Force
+    Save-LauncherProfiles $mcDir $j
+}
+
+function Get-ModrinthVersion($pack, [string]$key) {
+    # A version id, or (servers made before 1.0.5 kept only the label) the version number
+    if ($key -match '^[A-Za-z0-9]{8}$') { try { return Invoke-RestMethod "https://api.modrinth.com/v2/version/$key" } catch { } }
+    $vs = @(Invoke-RestMethod "https://api.modrinth.com/v2/project/$($pack.slug)/version" | ForEach-Object { $_ })
+    $v = $vs | Where-Object { $_.version_number -eq $key } | Select-Object -First 1
+    if (-not $v) { throw "모드팩 버전을 찾지 못했어요: $key" }
+    return $v
+}
+
+function Get-ModrinthClient($ver, [string]$stage) {
+    $f = $ver.files | Where-Object primary | Select-Object -First 1
+    if (-not $f) { $f = $ver.files[0] }
+    $mr = Join-Path $Cache $f.filename
+    Step "모드팩 파일 받는 중 ($([math]::Round($f.size / 1MB)) MB)"
+    Get-Download $f.url $mr -Sha512 $f.hashes.sha512
+    $x = Join-Path $stage '_mrpack'
+    [IO.Compression.ZipFile]::ExtractToDirectory($mr, $x)
+    $idx = Get-Content (Join-Path $x 'modrinth.index.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $deps = $idx.dependencies; $mc = $deps.minecraft
+    if ($deps.forge) { $li = @{ loader = 'forge'; version = $deps.forge; mc = $mc } }
+    elseif ($deps.neoforge) { $li = @{ loader = 'neoforge'; version = $deps.neoforge; mc = $mc } }
+    elseif ($deps.'fabric-loader') { $li = @{ loader = 'fabric'; version = $deps.'fabric-loader'; mc = $mc } }
+    else { throw '이 모드팩의 로더는 지원하지 않아요 (Forge/NeoForge/Fabric만 가능).' }
+    # The game gets everything except what the pack marks as server-only
+    $files = @($idx.files | Where-Object { -not $_.env -or $_.env.client -ne 'unsupported' })
+    $sum = [long]0; foreach ($m in $files) { $sum += [long]$m.fileSize }
+    Assert-FreeSpace ([long]($sum * 2.2) + 700MB)
+    Step "게임용 모드 $($files.Count)개 받는 중"
+    $cfg = New-Object System.Text.StringBuilder
+    foreach ($m in $files) {
+        if ($m.path -match '(^[\\/])|(\.\.)|(:)') { throw "잘못된 파일 경로가 들어 있어요: $($m.path)" }
+        [void]$cfg.AppendLine("url = `"$($m.downloads[0])`"")
+        [void]$cfg.AppendLine("output = `"$((Join-Path $stage $m.path) -replace '\\', '/')`"")
+    }
+    $cfgFile = Join-Path $x 'curl-list.txt'
+    [IO.File]::WriteAllText($cfgFile, $cfg.ToString(), (New-Object Text.UTF8Encoding($false)))
+    $cp = Start-Process curl.exe -ArgumentList @('-g', '-L', '--fail', '--retry', '3', '--create-dirs', '--parallel', '--parallel-max', '8', '-s', '-S', '-K', "`"$cfgFile`"") `
+        -NoNewWindow -PassThru -RedirectStandardError (Join-Path $x 'curl-err.txt')
+    $lastN = -1
+    while (-not $cp.HasExited) {
+        Start-Sleep -Seconds 2
+        $n = @($files | Where-Object { Test-Path -LiteralPath (Join-Path $stage $_.path) }).Count
+        if ($n -ne $lastN) { $lastN = $n; Info "모드 받는 중... $n / $($files.Count)" }
+    }
+    $bad = @($files | Where-Object { $o = Join-Path $stage $_.path; -not (Test-Path -LiteralPath $o) -or (Get-FileHash -LiteralPath $o -Algorithm SHA1).Hash -ne $_.hashes.sha1.ToUpper() } | ForEach-Object { $_.path })
+    if ($bad.Count) { throw "모드 $($bad.Count)개를 제대로 받지 못했어요: $($bad[0..([Math]::Min(4, $bad.Count - 1))] -join ', ')" }
+    foreach ($o in 'overrides', 'client-overrides') { $od = Join-Path $x $o; if (Test-Path -LiteralPath $od) { Copy-Tree $od $stage } }
+    Remove-Item -LiteralPath $x -Recurse -Force
+    return $li
+}
+
+function Get-CurseForgeClient($pack, [string]$label, [string]$stage) {
+    # CurseForge only allows its own app to fetch many mods one by one, but the server pack is a single public
+    # download with every mod the server needs; a game with those mods can join, it only lacks a few look-and-feel extras
+    $ver = $pack.versions | Where-Object label -eq $label
+    if (-not $ver) { throw "버전을 찾지 못했어요: $label" }
+    $zip = Join-Path $Cache ([uri]::UnescapeDataString(($ver.url -split '/')[-1]))
+    $need = [long]($ver.size * 1.6) + 700MB
+    if (-not ((Test-Path -LiteralPath $zip) -and (Get-Item -LiteralPath $zip).Length -eq $ver.size)) { $need += $ver.size }
+    Assert-FreeSpace $need
+    Step "모드팩 받는 중 ($([math]::Round($ver.size / 1GB, 2)) GB, 몇 분 걸려요)"
+    $sha = ''; if ($ver.PSObject.Properties['sha256']) { $sha = [string]$ver.sha256 }
+    Get-Download $ver.url $zip -Size $ver.size -Sha256 $sha
+    Step '압축 푸는 중'
+    $x = Join-Path $stage '_pack'
+    [IO.Compression.ZipFile]::ExtractToDirectory($zip, $x)
+    $src = $x; $top = @(Get-ChildItem -LiteralPath $x -Force)
+    if ($top.Count -eq 1 -and $top[0].PSIsContainer) { $src = $top[0].FullName }
+    $li = Find-Loader $src $pack
+    foreach ($d in @('mods') + $ClientDirs) { $p = Join-Path $src $d; if (Test-Path -LiteralPath $p) { Copy-Tree $p (Join-Path $stage $d) } }
+    Remove-Item -LiteralPath $x -Recurse -Force
+    return $li
+}
+
+function Get-ServerClient([string]$srv, [string]$stage) {
+    # The host's own server already has every file: mods it runs, client-only mods it set aside, and the extra mods for friends
+    $i = Get-Content -LiteralPath (Join-Path $srv 'server-info.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $mods = Join-Path $stage 'mods'; New-Item -ItemType Directory -Force $mods | Out-Null
+    $serverOnly = @{}
+    $aj = Join-Path $srv 'added-mods.json'
+    if (Test-Path -LiteralPath $aj) { Get-Content -LiteralPath $aj -Raw -Encoding UTF8 | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { -not $_.forClient } | ForEach-Object { $serverOnly[$_.file] = $true } }
+    Get-ChildItem -LiteralPath (Join-Path $srv 'mods') -Filter '*.jar' -File -ErrorAction SilentlyContinue | Where-Object { -not $serverOnly.ContainsKey($_.Name) } |
+        ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $mods }
+    Copy-FriendMods $srv $mods
+    foreach ($d in $ClientDirs) { $p = Join-Path $srv $d; if (Test-Path -LiteralPath $p) { Copy-Tree $p (Join-Path $stage $d) } }
+    return @{ loader = $i.loader; version = $i.loaderVersion; mc = $i.mc }
+}
+function Copy-FriendMods([string]$srv, [string]$mods) {
+    foreach ($d in '_client_only_mods', '친구용_추가모드') {
+        Get-ChildItem -LiteralPath (Join-Path $srv $d) -Filter '*.jar' -File -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $mods -Force }
+    }
+}
+
+function Get-AddedClientMods([string]$b64, [string]$mods) {
+    # Mods the host added by hand, named by Modrinth project and file so the friend gets the very same file
+    if (-not $b64) { return }
+    $parsed = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)) | ConvertFrom-Json
+    New-Item -ItemType Directory -Force $mods | Out-Null
+    foreach ($m in @($parsed)) {
+        $projId = [string]$m.p; $file = [string]$m.f
+        if ($projId -notmatch '^[A-Za-z0-9]{4,16}$' -or $file -notmatch '^[A-Za-z0-9 ._+()\[\]-]+\.jar$') { Info "이상한 추가 모드 정보는 건너뛰었어요: $file"; continue }
+        $hit = $null
+        foreach ($v in @(Invoke-RestMethod "https://api.modrinth.com/v2/project/$projId/version" | ForEach-Object { $_ })) {
+            $hit = $v.files | Where-Object { $_.filename -eq $file } | Select-Object -First 1
+            if ($hit) { break }
+        }
+        if (-not $hit) { Info "방장이 추가한 모드를 찾지 못했어요: $file (방장에게 그 파일을 받아서 mods 폴더에 넣어 주세요)"; continue }
+        Get-Download $hit.url (Join-Path $mods $file) -Sha1 $hit.hashes.sha1
+        Info "방장이 추가한 모드: $file"
+    }
+}
+
+function Install-Client($pack) {
+    if ($Name -notmatch '^[A-Za-z0-9]([A-Za-z0-9 ._-]{0,58}[A-Za-z0-9_-])?$') { throw "이름으로 쓸 수 없어요: '$Name'" }
+    if ($Address -notmatch '^[A-Za-z0-9.-]+(:\d{1,5})?$') { throw "서버 주소가 이상해요: '$Address'" }
+    $gameRoot = Join-Path $Root 'game'
+    $gd = $GameDir; if (-not $gd) { $gd = Join-Path $gameRoot $Name }
+    $gd = [IO.Path]::GetFullPath($gd)
+    if (-not $gd.StartsWith($gameRoot + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "게임 폴더 위치가 이상해요: $gd" }
+    $mcDir = Get-McDir
+    $host_ = [bool]$FromServer
+    Write-Host "게임 준비: $($pack.name)  ($Name)" -ForegroundColor Yellow
+    # One copy of the launcher's own list, from before this program ever touched it
+    $pf = Join-Path $mcDir 'launcher_profiles.json'
+    if (-not (Test-Path -LiteralPath "$pf.mcsm-backup")) { Copy-Item -LiteralPath $pf -Destination "$pf.mcsm-backup" }
+    New-Item -ItemType Directory -Force $gd | Out-Null
+    $markerFile = Join-Path $gd 'mcsm-game.json'
+    $old = $null; if (Test-Path -LiteralPath $markerFile) { try { $old = Get-Content -LiteralPath $markerFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { } }
+
+    # Unchanged pack, version and mods: skip straight to the launcher
+    if ($host_) {
+        $info = Get-Content -LiteralPath (Join-Path $FromServer 'server-info.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $verLabel = $info.version
+        $jars = foreach ($d in 'mods', '_client_only_mods', '친구용_추가모드') { Get-ChildItem -LiteralPath (Join-Path $FromServer $d) -Filter '*.jar' -File -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Name):$($_.Length)" } }
+        $sigSrc = "$($pack.id)|$verLabel|" + ((@($jars) | Sort-Object) -join ',')
+    }
+    else { $verLabel = $VersionKey; $sigSrc = "$($pack.id)|$VersionKey|$AddedMods" }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    $sig = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($sigSrc)) | ForEach-Object { $_.ToString('x2') })
+
+    if ($old -and $old.sig -eq $sig -and $old.versionId -and (Test-Path -LiteralPath (Join-Path $gd 'mods')) -and (Test-Path -LiteralPath (Join-Path $mcDir "versions\$($old.versionId)\$($old.versionId).json"))) {
+        Info '게임 파일은 이미 서버와 똑같아요.'
+        $vid = $old.versionId; $li = @{ loader = $old.loader; version = $old.loaderVersion; mc = $old.mc }; $verLabel = $old.version
+    }
+    else {
+        $script:tmp = Join-Path $Cache ('g' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+        New-Item -ItemType Directory -Force $script:tmp | Out-Null
+        if ($host_ -and $pack.source -eq 'modrinth') {
+            $key = $info.version; if ($info.PSObject.Properties['versionKey'] -and $info.versionKey) { $key = $info.versionKey }
+            $li = Get-ModrinthClient (Get-ModrinthVersion $pack $key) $script:tmp
+            Copy-FriendMods $FromServer (Join-Path $script:tmp 'mods')
+        }
+        elseif ($host_) { $li = Get-ServerClient $FromServer $script:tmp }
+        elseif ($pack.source -eq 'curseforge') { $li = Get-CurseForgeClient $pack $VersionKey $script:tmp }
+        else { $ver = Get-ModrinthVersion $pack $VersionKey; $verLabel = $ver.version_number; $li = Get-ModrinthClient $ver $script:tmp }
+        if ($li.version -notmatch '^[A-Za-z0-9._+-]+$' -or "$($li.mc)" -notmatch '^[0-9][0-9.]*$') { throw "모드팩 안의 버전 정보가 이상해요 (마인크래프트 '$($li.mc)', 로더 '$($li.version)')." }
+        Get-AddedClientMods $AddedMods (Join-Path $script:tmp 'mods')
+
+        Step '게임 폴더에 넣는 중'
+        # mods is replaced as a whole (old versions must go); configs are laid over; worlds, screenshots and settings stay
+        $gm = Join-Path $gd 'mods'
+        if (Test-Path -LiteralPath $gm) { Remove-Item -LiteralPath $gm -Recurse -Force }
+        if (Test-Path -LiteralPath (Join-Path $script:tmp 'mods')) { Move-Item -LiteralPath (Join-Path $script:tmp 'mods') -Destination $gm } else { New-Item -ItemType Directory -Force $gm | Out-Null }
+        Get-ChildItem -LiteralPath $script:tmp -Directory | ForEach-Object { Copy-Tree $_.FullName (Join-Path $gd $_.Name) }
+        # A pack's own options.txt / servers.dat only seed a new folder; they never replace the player's
+        Get-ChildItem -LiteralPath $script:tmp -File | Where-Object { -not ($_.Name -in 'options.txt', 'servers.dat' -and (Test-Path -LiteralPath (Join-Path $gd $_.Name))) } |
+            ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $gd -Force }
+        Remove-Item -LiteralPath $script:tmp -Recurse -Force; $script:tmp = $null
+        Info "모드 $(@(Get-ChildItem -LiteralPath $gm -Filter '*.jar').Count)개 준비 완료"
+        $vid = Install-ClientLoader $li $mcDir
+    }
+
+    Step '마인크래프트 런처에 등록하는 중'
+    $profKey = 'mcsm-' + (((Split-Path $gd -Leaf).ToLower() -replace '[^a-z0-9]+', '-').Trim('-'))
+    $label = "모드팩: $($pack.name) ($Name)"
+    Set-LauncherProfile $mcDir $profKey $label $vid $gd $GameRamGB
+    Add-NbtHelper
+    $entry = "$Name (친구 서버)"; if ($host_) { $entry = "$Name (내 서버)" }
+    [McsmNbt]::UpsertServer((Join-Path $gd 'servers.dat'), $entry, $Address)
+    # A fresh game folder starts in Korean; afterwards the player's own settings are left alone
+    $opt = Join-Path $gd 'options.txt'
+    if (-not (Test-Path -LiteralPath $opt)) { [IO.File]::WriteAllText($opt, "lang:ko_kr`r`n", (New-Object Text.UTF8Encoding($false))) }
+    [ordered]@{
+        kind = $(if ($host_) { 'host' } else { 'friend' }); name = $Name; pack = $pack.id; packName = $pack.name; version = $verLabel; versionKey = $VersionKey
+        versionId = $vid; loader = $li.loader; loaderVersion = $li.version; mc = $li.mc; address = $Address; addedMods = $AddedMods
+        profile = $profKey; profileName = $label; serverEntry = $entry; sig = $sig; ramGB = $GameRamGB; installed = (Get-Date -Format 'yyyy-MM-dd HH:mm')
+    } | ConvertTo-Json | Set-Content -LiteralPath $markerFile -Encoding UTF8
+    Write-Host ''
+    Write-Host '==================================================' -ForegroundColor Green
+    Write-Host "  게임 준비 완료! 런처에서 '$label' 을(를) 고르고 [플레이]" -ForegroundColor Green
+    Write-Host "  → 멀티플레이 → '$entry' 접속" -ForegroundColor Green
+    Write-Host '==================================================' -ForegroundColor Green
+}
+
 try {
     $packs = (Get-Content (Join-Path $Prog 'packs.json') -Raw -Encoding UTF8 | ConvertFrom-Json).packs
     $pack = $packs | Where-Object id -eq $PackId
     if (-not $pack) { throw "목록에 없는 모드팩이에요: $PackId" }
+    if ($Client) {
+        Install-Client $pack
+        $result = 'ok'
+    }
+    else {
+    # ----- server install (the rest of this block) -----
 
     if ($Name -notmatch '^[A-Za-z0-9]([A-Za-z0-9 ._-]{0,58}[A-Za-z0-9_-])?$' -or ($Name -split '\.')[0].Trim() -match '^(?i)(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])$') {
         throw "서버 이름으로 쓸 수 없어요: '$Name'"
@@ -588,7 +975,7 @@ pause >nul
 "@
 
     [ordered]@{
-        pack = $pack.id; packName = $pack.name; version = $verLabel; mc = $li.mc
+        pack = $pack.id; packName = $pack.name; version = $verLabel; versionKey = $VersionKey; mc = $li.mc
         loader = $li.loader; loaderVersion = $li.version; java = $major; ramGB = $RamGB
         page = $pack.page; installed = (Get-Date -Format 'yyyy-MM-dd HH:mm')
     } | ConvertTo-Json | Set-Content (Join-Path $dir 'server-info.json') -Encoding UTF8
@@ -625,6 +1012,7 @@ pause >nul
         Write-Host '==================================================' -ForegroundColor Green
         $result = 'ok'
     }
+    }   # end of server install
 }
 catch {
     Write-Host ''

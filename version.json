@@ -1,15 +1,15 @@
 {
-    "version":  "1.0.4",
+    "version":  "1.0.5",
     "date":  "2026-10-16",
-    "notes":  "Playit 없이 [친구랑 하기]로 켰을 때 \u0027친구들이 들어올 수 있어요\u0027라고 잘못 나오던 문제를 고쳤어요. 모드팩 설치 보안을 강화했어요(모드팩에 든 관리자 목록 삭제, 서버팩 파일 검사).",
+    "notes":  "[▶ 마인크래프트 켜기] 한 번이면 모드팩 게임이 준비되고 런처가 열려요(CurseForge 앱 필요 없음). 친구는 [친구 서버 들어가기] 탭에 안내 글을 붙여 넣으면 끝. 서버 끌 때 자동 백업, Playit 주소 복사 버튼, 친구가 못 들어온 이유 안내도 생겼어요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "dd868edbfd68782017e5622516691af87ecfa52c940a2ce6a7bce26c5e6f623f"
+                      "sha256":  "606f275a7ddc2eeaed044002773316c1afd25b809522f46833e5a2906f6f2dfd"
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "da9b34700df8ce380a921620b2e8e2f128bb8518c7b9c80da7b4ab6e764fff27"
+                      "sha256":  "6114e3cfb2934a79b0a3f04b0dc5ee29bd028ee8a97883802c03f771b30145b6"
                   },
                   {
                       "path":  "packs.json",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "4f5637c9fe5a020691daa59d9a687a8316779ad4a1d6a57aa4ac0a483be109a8"
+                      "sha256":  "8d9d1f79a1720846756a0d3b52e1d6bcf54379eb55edb59cbbd7411e6b9ca1d9"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "aea5adbef574785273c4f39c1b7687cf801993e0cb6bf6781a41689e4edbb20c"
+                      "sha256":  "9d713f12979d62879250bc0a2035e3ef57315ac4251e85019d21c75ed7269720"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "a080df8f5c2c3c3a7ab19f9806a1a2c079731b80574bd9a281cda513a4857045"
+                     "sha256":  "5328804e4cac077bd81b0c60f77e1bee7480e722567387f4b2beec6831ce6eba"
                  }
 }

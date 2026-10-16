@@ -79,12 +79,14 @@ public class McProc {
 $Prog = $PSScriptRoot
 $Root = Split-Path $Prog -Parent
 $ServersDir = Join-Path $Root 'servers'
+$GameRoot = Join-Path $Root 'game'       # game (client) folders the official launcher plays from
 $PlayitDir = Join-Path $Prog 'playit'
 $PlayitKeyFile = Join-Path $PlayitDir 'secret-key.dpapi'      # encrypted for this Windows user on this PC
 $PlayitKeyPlain = Join-Path $PlayitDir 'secret-key.txt'       # older plain-text form, converted on first start
 Add-Type -AssemblyName System.Security
 $KeyEntropy = [Text.Encoding]::UTF8.GetBytes('mcsm-playit')
 $PlayitLog = Join-Path $PlayitDir 'playit.log'
+$PlayitAddrFile = Join-Path $PlayitDir 'address.txt'          # the address friends type in; not a secret
 $Cp949 = [Text.Encoding]::GetEncoding(949)
 $Utf8 = New-Object Text.UTF8Encoding($false)
 New-Item -ItemType Directory -Force $ServersDir | Out-Null
@@ -93,6 +95,8 @@ New-Item -ItemType Directory -Force $ServersDir | Out-Null
 # Development happens in a private repo; only releases are pushed here (see _dev\release.ps1).
 $UpdateBase = 'https://raw.githubusercontent.com/epaldks10-ship-it/mc-modpack-server-manager-release/main'
 $UpdatableFiles = @('manager.ps1', 'install.ps1', 'packs.json', 'client-only-mods.txt', 'manual.html', 'version.txt')
+# Later releases may add program files; the manifest is signed, so any plain file name of these kinds is accepted
+function Test-UpdatableFile([string]$path) { return ($path -in $UpdatableFiles) -or ($path -match '^[A-Za-z0-9_-]+\.(ps1|json|txt|html)$') }
 $AppVersion = '0.0.0'
 $vf = Join-Path $Prog 'version.txt'; if (Test-Path -LiteralPath $vf) { $AppVersion = ([IO.File]::ReadAllText($vf)).Trim() }
 # Releases are signed with a key that lives only on the developer's PC (%APPDATA%\mcsm-release), never on GitHub,
@@ -143,7 +147,7 @@ function Invoke-SelfUpdate {
     New-Item -ItemType Directory -Force $stage | Out-Null
     foreach ($f in $remote.files) {
         # Only known program files, and only if every one arrives intact; otherwise nothing changes
-        if ($f.path -notin $UpdatableFiles) { return $false }
+        if (-not (Test-UpdatableFile $f.path)) { return $false }
         $dst = Join-Path $stage $f.path
         try { $wc.DownloadFile("$UpdateBase/program/$($f.path)", $dst) } catch { return $false }
         if ((Get-FileHash -LiteralPath $dst -Algorithm SHA256).Hash -ne ([string]$f.sha256).ToUpper()) { return $false }
@@ -213,8 +217,9 @@ $tabs = New-Object Windows.Forms.TabControl
 $tabs.Location = New-Object Drawing.Point(10, 10); $tabs.Size = New-Object Drawing.Size(975, 660)
 $tabMy = New-Object Windows.Forms.TabPage; $tabMy.Text = '  내 서버  '
 $tabNew = New-Object Windows.Forms.TabPage; $tabNew.Text = '  새 서버 만들기  '
+$tabJoin = New-Object Windows.Forms.TabPage; $tabJoin.Text = '  친구 서버 들어가기  '
 $tabHelp = New-Object Windows.Forms.TabPage; $tabHelp.Text = '  사용 설명서  '
-$tabs.TabPages.AddRange(@($tabMy, $tabNew, $tabHelp))
+$tabs.TabPages.AddRange(@($tabMy, $tabNew, $tabJoin, $tabHelp))
 $form.Controls.Add($tabs)
 
 # =====================================================================================
@@ -321,14 +326,20 @@ $installTimer.Add_Tick({
             # The reason, not whatever footer line came last, is what the user needs to see
             if ($t -match '설치 실패:\s*(.+)$') { $script:installErr = $Matches[1].Trim() }
         }
+        $kind = $script:jobKind
         if ($sb.Length) {
-            $txtInstallLog.AppendText($sb.ToString())
-            if ($script:jobKind -eq 'update') { $txtConsole.AppendText($sb.ToString()) }
+            if ($kind -eq 'join') { $txtJoinLog.AppendText($sb.ToString()) }
+            elseif ($kind -eq 'game') { if (-not $script:srv) { $txtConsole.AppendText($sb.ToString()) } }
+            else { $txtInstallLog.AppendText($sb.ToString()) }
+            if ($kind -eq 'update') { $txtConsole.AppendText($sb.ToString()) }
         }
-        $head = '설치 중이에요. 프로그램을 닫지 마세요.'; if ($script:jobKind -eq 'update') { $head = '모드팩 업데이트 중이에요. 프로그램을 닫지 마세요.' }
+        $head = '설치 중이에요. 프로그램을 닫지 마세요.'; if ($kind -eq 'update') { $head = '모드팩 업데이트 중이에요. 프로그램을 닫지 마세요.' }
+        if ($kind -in 'game', 'join') { $head = '게임 준비 중이에요. (처음엔 몇 분 걸려요)' }
         if ($p.Running) {
-            $lblWork.Text = "$head`n$($script:installLast)"
-            if ($script:jobKind -eq 'update') { $lblStage.Text = "$head  $($script:installLast)" }
+            if ($kind -eq 'join') { $lblJoinWork.Text = "$head`n$($script:installLast)" }
+            elseif ($kind -eq 'game') { $lblStage.Text = "$head  $($script:installLast)" }
+            else { $lblWork.Text = "$head`n$($script:installLast)" }
+            if ($kind -eq 'update') { $lblStage.Text = "$head  $($script:installLast)" }
             return
         }
         if (-not $p.Lines.IsEmpty) { return }
@@ -339,6 +350,8 @@ $installTimer.Add_Tick({
         $btnInstall.Enabled = $true
         if (-not $script:srv) { $btnStart.Enabled = $true; $btnLocal.Enabled = $true }
         $script:updCache = @{}
+        $btnPlay.Enabled = $true; $btnJoin.Enabled = $true; $btnJoinAgain.Enabled = $true
+        if ($kind -in 'game', 'join') { Complete-GameJob $ok; return }
         if ($script:jobKind -eq 'update') {
             if ($ok) { $lblStage.Text = '모드팩 업데이트가 끝났어요. 친구들에게도 새 버전으로 업데이트하라고 알려 주세요.'; $lblWork.Text = '' }
             else { $lblStage.Text = "업데이트에 실패했어요. 서버는 예전 버전 그대로예요. 이유: $($script:installErr)" }
@@ -376,11 +389,14 @@ function Start-InstallJob([string]$installArgs, [string]$kind) {
     $script:jobKind = $kind; $script:installLast = ''; $script:installErr = '(아래 기록을 확인하세요)'
     $script:statusFile = Join-Path $env:TEMP "mcserver-install-$([guid]::NewGuid().ToString('N')).txt"
     $argLine = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $Prog 'install.ps1')`" $installArgs -StatusFile `"$script:statusFile`" -NoPause"
-    $txtInstallLog.Clear()
-    if ($kind -eq 'update') { $txtConsole.Clear() }
+    if ($kind -eq 'join') { $txtJoinLog.Clear() } elseif ($kind -ne 'game') { $txtInstallLog.Clear() }
+    if ($kind -eq 'update' -or ($kind -eq 'game' -and -not $script:srv)) { $txtConsole.Clear() }
     $script:installProc = New-Object McProc('powershell.exe', $argLine, $Prog, [Text.Encoding]::Default.CodePage)
     $btnInstall.Enabled = $false; $btnUpdate.Enabled = $false; $btnStart.Enabled = $false; $btnLocal.Enabled = $false
-    $lblWork.ForeColor = [Drawing.Color]::DarkGreen; $lblWork.Text = '준비 중...'
+    $btnPlay.Enabled = $false; $btnJoin.Enabled = $false; $btnJoinAgain.Enabled = $false
+    if ($kind -eq 'join') { $lblJoinWork.ForeColor = [Drawing.Color]::DarkGreen; $lblJoinWork.Text = '준비 중...' }
+    elseif ($kind -eq 'game') { $lblStage.Text = '게임 준비 중...' }
+    else { $lblWork.ForeColor = [Drawing.Color]::DarkGreen; $lblWork.Text = '준비 중...' }
     $installTimer.Start()
 }
 
@@ -436,7 +452,8 @@ function Start-PackUpdate {
 # Tab: my servers (server console lives here)
 # =====================================================================================
 $lblMy = New-Ctl Label 10 10 230 22 '만들어 둔 서버'
-$lstSrv = New-Ctl ListBox 10 35 235 190
+$lstSrv = New-Ctl ListBox 10 35 235 150
+$btnPlay = New-Ctl Button 10 186 235 42 '▶ 마인크래프트 켜기'; $btnPlay.Font = $bold; $btnPlay.BackColor = [Drawing.Color]::FromArgb(214, 240, 214)
 $btnSettings = New-Ctl Button 10 232 235 34 '서버 설정 (난이도, 인원 등)'
 $btnMods = New-Ctl Button 10 270 235 34 '모드 추가 / 관리'
 $btnBackup = New-Ctl Button 10 308 235 34 '백업 / 월드 관리'
@@ -445,7 +462,8 @@ $btnPlayit = New-Ctl Button 10 384 235 34 'Playit 연결 설정'
 $btnSecurity = New-Ctl Button 10 422 235 34 '보안 점검'
 $btnUpdate = New-Ctl Button 10 460 235 34 '모드팩 업데이트 확인'
 $btnFolder = New-Ctl Button 10 498 235 34 '서버 폴더 열기'
-$lblPlayit = New-Ctl Label 10 540 235 78 ''
+$lblPlayit = New-Ctl Label 10 536 235 50 ''
+$btnCopyAddr = New-Ctl Button 10 588 235 30 '친구에게 줄 주소 복사'
 
 $lblState = New-Ctl Label 260 35 695 48 '● 꺼짐'
 $lblState.Font = $big; $lblState.ForeColor = [Drawing.Color]::White; $lblState.BackColor = [Drawing.Color]::Gray; $lblState.TextAlign = 'MiddleLeft'
@@ -469,7 +487,8 @@ $txtConsole.Multiline = $true; $txtConsole.ReadOnly = $true; $txtConsole.ScrollB
 $txtConsole.Font = $mono; $txtConsole.BackColor = [Drawing.Color]::FromArgb(24, 24, 24); $txtConsole.ForeColor = [Drawing.Color]::Gainsboro
 $txtCmd = New-Ctl TextBox 260 580 590 28
 $btnSend = New-Ctl Button 856 578 99 32 '명령 보내기'
-$tabMy.Controls.AddRange(@($lblMy, $lstSrv, $btnSettings, $btnFolder, $btnMods, $btnFriend, $btnBackup, $btnPlayit, $btnSecurity, $btnUpdate, $lblPlayit,
+$tip.SetToolTip($btnPlay, '서버와 똑같은 모드팩 게임을 준비하고 마인크래프트 런처를 열어요. 멀티플레이에 내 서버가 들어 있어요.')
+$tabMy.Controls.AddRange(@($lblMy, $lstSrv, $btnPlay, $btnSettings, $btnFolder, $btnMods, $btnFriend, $btnBackup, $btnPlayit, $btnSecurity, $btnUpdate, $lblPlayit, $btnCopyAddr,
         $lblState, $prg, $lblStage, $lblSrvInfo, $lblRamSrv, $numRamSrv, $btnRamSrv, $btnStart, $btnLocal, $btnStop, $btnAddFriend, $lblPlayers, $txtConsole, $txtCmd, $btnSend))
 
 function Update-Servers {
@@ -530,6 +549,7 @@ function Start-Server([switch]$Local) {
     if (-not $d) { Show-Msg '왼쪽 목록에서 서버를 고르세요.'; return }
     if ($script:srv) { Show-Msg '이미 켜져 있는 서버가 있어요.'; return }
     if ($script:installProc) { Show-Msg '설치나 업데이트가 끝난 다음에 켜 주세요.'; return }
+    if ($script:autoBk) { Show-Msg '자동 백업이 끝난 다음에 켜 주세요. (잠깐이면 돼요)'; return }
     if (Test-PortBusy) {
         # A server this program lost track of can be saved and stopped from here; anything else needs the user
         if (@(Get-OrphanServers).Count) { if (-not (Stop-Orphans -Ask)) { return } }
@@ -570,7 +590,7 @@ function Start-Server([switch]$Local) {
     $script:srv = [pscustomobject]@{
         dir = $d; name = $lstSrv.SelectedItem; proc = $proc; sw = [Diagnostics.Stopwatch]::StartNew(); expect = $expect
         done = $false; stopping = $false; stage = 0; spawn = 0; players = @{}; tail = New-Object System.Collections.Generic.List[string]; stopSw = $null
-        local = [bool]$Local; noPlayit = [bool]$why
+        local = [bool]$Local; noPlayit = [bool]$why; warned = @{}; askNick = $null
     }
     $lstSrv.Enabled = $false; $btnStart.Enabled = $false; $btnLocal.Enabled = $false; $btnStop.Enabled = $true; $btnMods.Enabled = $false; $btnUpdate.Enabled = $false; $btnRamSrv.Enabled = $false
     $prg.Value = 0; $lblPlayers.Text = '접속 0명'
@@ -615,6 +635,8 @@ function Complete-Server {
     if ($s.done -or $s.stopping) {
         Set-State '● 꺼짐' ([Drawing.Color]::Gray); $lblStage.Text = '서버가 안전하게 꺼졌어요.'
         $txtConsole.AppendText("`r`n[관리 프로그램] 서버가 꺼졌어요.`r`n")
+        # Stopped while still loading: no world was opened, so there is nothing new to back up
+        if ($s.done) { Start-AutoBackup $s.dir }
         return
     }
     Set-State '● 서버가 켜지다가 멈췄어요' ([Drawing.Color]::Firebrick)
@@ -640,7 +662,7 @@ $StageText = @('Java 시작하는 중', '모드 로더 준비하는 중', '모�
 function Show-OpenBanner($s) {
     if ($s.local) {
         Set-State '● 서버 열림!  (혼자 하기: 주소 localhost)' ([Drawing.Color]::ForestGreen)
-        $lblStage.Text = "마인크래프트 → 멀티플레이 → 서버 추가 → 주소에 localhost 입력. 끌 때는 [서버 끄기]."
+        $lblStage.Text = "게임은 왼쪽 [▶ 마인크래프트 켜기]로 켜세요. 멀티플레이에 내 서버가 들어 있어요. 끌 때는 [서버 끄기]."
     }
     elseif ($s.noPlayit) {
         # Started anyway after the "no Playit" warning: say plainly that friends still can't join
@@ -649,9 +671,46 @@ function Show-OpenBanner($s) {
         else { $lblStage.Text = "_program\playit\playit.exe 파일이 없어요 (백신이 지웠을 수 있어요). 프로그램 압축 파일을 다시 풀어서 그 파일만 제자리에 넣어 주세요." }
     }
     else {
-        Set-State '● 서버 열림!  친구들이 들어올 수 있어요' ([Drawing.Color]::ForestGreen)
-        $lblStage.Text = "켜는 데 $([int]$s.sw.Elapsed.TotalSeconds)초 걸렸어요. 나는 localhost, 친구들은 Playit 주소로 접속. 끌 때는 [서버 끄기]."
+        $addr = Get-PlayitAddress
+        if ($addr) {
+            Set-State "● 서버 열림!  친구들은 $addr 로 접속" ([Drawing.Color]::ForestGreen)
+            $lblStage.Text = "나는 왼쪽 [▶ 마인크래프트 켜기]로 접속. 친구들에게는 [친구 접속 안내] 글을 보내 주세요. 끌 때는 [서버 끄기]."
+        }
+        else {
+            Set-State '● 서버 열림!  친구들이 들어올 수 있어요' ([Drawing.Color]::ForestGreen)
+            $lblStage.Text = "나는 왼쪽 [▶ 마인크래프트 켜기]로 접속. 친구용 주소는 왼쪽 아래 [친구에게 줄 주소 넣기]에서 한 번 넣어 두세요."
+        }
     }
+}
+
+function Find-JoinProblem($s, [string]$line) {
+    # Friends who bounce off the server rarely know why; the log does, so say it in plain words
+    $why = ''
+    if ($line -match 'lost connection: (.+)$') { $why = $Matches[1] }
+    elseif ($line -match 'Disconnecting .*?\): (.+)$') { $why = $Matches[1] }
+    if (-not $why) { return $null }
+    $name = ''
+    if ($line -match 'name=([A-Za-z0-9_]{3,16})[,\]]') { $name = $Matches[1] }
+    elseif ($line -match 'Disconnecting ([A-Za-z0-9_]{3,16}) \(') { $name = $Matches[1] }
+    elseif ($line -match ':\s([A-Za-z0-9_]{3,16})\s(\(/[^)]*\)\s)?lost connection') { $name = $Matches[1] }
+    $who = '어떤 친구가'; $whose = '친구의'
+    if ($name) { $who = "'$name' 님이"; $whose = "'$name' 님의" }
+    $i = Read-Json (Join-Path $s.dir 'server-info.json')
+    $kind = ''; $msg = ''
+    if ($why -match '(?i)white-?list') { $kind = 'wl'; $msg = "$who 화이트리스트에 없어서 못 들어왔어요. → [친구 추가]에 닉네임을 넣어 주세요." }
+    elseif ($why -match '(?i)banned') { $kind = 'ban'; $msg = "$who 차단된 사람이라 못 들어왔어요." }
+    elseif ($why -match '(?i)server is full') { $kind = 'full'; $msg = "서버 인원이 꽉 차서 $who 못 들어왔어요. → [서버 설정]에서 최대 인원을 늘려 주세요." }
+    elseif ($why -match '(?i)verify username|invalid session|authenticat|multiplayer is disabled') { $kind = 'auth'; $msg = "$whose 마인크래프트 로그인 확인이 안 됐어요. → 런처를 껐다가 다시 로그인해서 실행하라고 알려 주세요. (정품 계정만 들어올 수 있어요)" }
+    elseif ($why -match '(?i)mod|channel|registr|negotiat|forge|fabric|mismatch|missing') { $kind = 'mods'; $msg = "$whose 모드팩이 서버와 달라서 튕겼어요. → [친구 접속 안내]대로 $($i.packName) $($i.version) 버전과 추가 모드를 똑같이 맞추라고 알려 주세요." }
+    elseif ($why -match '(?i)outdated|incompatible|version') { $kind = 'ver'; $msg = "$whose 마인크래프트 버전이 달라요. → 모드팩 앱에서 모드팩을 실행해서(마인크래프트 $($i.mc)) 접속하라고 알려 주세요." }
+    if (-not $kind) { return $null }
+    # One bounce often logs two lines; say it once a minute per friend
+    $key = "$kind|$name"
+    if ($s.warned.ContainsKey($key) -and ((Get-Date) - $s.warned[$key]).TotalSeconds -lt 60) { return $null }
+    $s.warned[$key] = Get-Date
+    $lblStage.Text = $msg
+    if ($kind -eq 'wl' -and $name) { $s.askNick = $name }
+    return $msg
 }
 
 function Read-ServerOutput {
@@ -689,10 +748,19 @@ function Read-ServerOutput {
         }
         if ($line -match ': (\S+) joined the game') { $s.players[$Matches[1]] = $true }
         if ($line -match ': (\S+) left the game') { $s.players.Remove($Matches[1]) }
+        if ($line -match 'lost connection: |Disconnecting ') { $note = Find-JoinProblem $s $line; if ($note) { [void]$sb.Append("[관리 프로그램] ※ $note`r`n") } }
     }
     if ($sb.Length) {
         if ($txtConsole.TextLength -gt 400000) { $txtConsole.Text = $txtConsole.Text.Substring($txtConsole.TextLength - 200000) }
         $txtConsole.AppendText($sb.ToString())
+    }
+    if ($s.askNick -and -not $script:askingJoin) {
+        # Asked after the read loop: the timer keeps ticking while the question is open
+        $n = $s.askNick; $s.askNick = $null; $script:askingJoin = $true
+        $ok = Ask-YesNo "'$n' 님이 들어오려고 했는데 화이트리스트에 없어서 막혔어요.`n`n지금 '$n' 님을 추가할까요? (아는 친구일 때만 [예]를 누르세요)"
+        $script:askingJoin = $false
+        if ($script:srv -ne $s) { return }
+        if ($ok) { $s.proc.Send("whitelist add $n"); $txtConsole.AppendText("> whitelist add $n`r`n[관리 프로그램] '$n' 님을 추가했어요. 다시 접속하라고 알려 주세요.`r`n") }
     }
     $lblPlayers.Text = "접속 $($s.players.Count)명"
     if (-not $s.done -and -not $s.stopping) {
@@ -729,10 +797,14 @@ $btnAddFriend.Add_Click({
         $nick = (Ask-Text "들여보낼 친구의 마인크래프트 닉네임을 입력하세요.`n(자바 에디션 계정 이름)").Trim()
         if (-not $nick) { return }
         if ($nick -notmatch '^[A-Za-z0-9_]{3,16}$') { Show-Msg '마인크래프트 닉네임은 영어, 숫자, _ 로 3~16글자예요.'; return }
-        if ($script:srv -and $script:srv.done) { $script:srv.proc.Send("whitelist add $nick"); $txtConsole.AppendText("> whitelist add $nick`r`n"); return }
-        Add-Content -LiteralPath (Join-Path $d 'whitelist-pending.txt') -Value $nick
-        Show-Msg "'$nick' 님은 서버가 다음에 켜질 때 자동으로 추가할게요."
+        if (-not (Add-Whitelist $d $nick)) { Show-Msg "'$nick' 님은 서버가 다음에 켜질 때 자동으로 추가할게요." }
     })
+function Add-Whitelist($d, [string]$nick) {
+    # Returns $true when the running server took it right away, $false when it waits for the next start
+    if ($script:srv -and $script:srv.done -and $script:srv.dir -eq $d) { $script:srv.proc.Send("whitelist add $nick"); $txtConsole.AppendText("> whitelist add $nick`r`n"); return $true }
+    Add-Content -LiteralPath (Join-Path $d 'whitelist-pending.txt') -Value $nick
+    return $false
+}
 $btnFolder.Add_Click({ $d = Get-SelDir; if ($d) { Start-Process explorer.exe "`"$d`"" } })
 $btnBackup.Add_Click({ Show-Backups })
 $btnFriend.Add_Click({ Show-FriendGuide })
@@ -781,9 +853,40 @@ function Start-Playit {
     # A dedicated pipe name keeps this copy apart from any other playit running on the PC
     $script:playit = New-Object McProc($exe, "--secret $key --socket-path \\.\pipe\playitd-mcserver -l `"$PlayitLog`"", $PlayitDir, 65001)
 }
+function ConvertTo-PlayitAddress([string]$t) {
+    # Accepts what people paste: "https://x.joinmc.link/", " x.joinmc.link:12345 " ...
+    $t = ($t.Trim() -replace '^[A-Za-z]+://', '') -replace '/.*$', ''
+    if ($t -match '^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+(:\d{1,5})?$') { return $t.ToLower() }
+    return $null
+}
+function Get-PlayitAddress {
+    if (Test-Path -LiteralPath $PlayitAddrFile) { return ([IO.File]::ReadAllText($PlayitAddrFile)).Trim() }
+    return ''
+}
+function Set-PlayitAddress([string]$a) {
+    if ($a) { [IO.File]::WriteAllText($PlayitAddrFile, $a, $Utf8) } else { Remove-Item -LiteralPath $PlayitAddrFile -Force -ErrorAction SilentlyContinue }
+    $btnCopyAddr.Text = '친구에게 줄 주소 복사'; if (-not $a) { $btnCopyAddr.Text = '친구에게 줄 주소 넣기' }
+    if ($script:srv -and $script:srv.done -and -not $script:srv.stopping) { Show-OpenBanner $script:srv }
+}
+function Find-PlayitAddressInLog {
+    # Playit prints the tunnel address when it connects; joinmc.link / ply.gg are its public tunnel domains
+    try { $text = (Get-Content -LiteralPath $PlayitLog -Tail 400 -ErrorAction Stop) -join "`n" } catch { return $null }
+    $m = [regex]::Matches($text, '\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(joinmc\.link|ply\.gg)(:\d{2,5})?\b')
+    if ($m.Count) { return $m[$m.Count - 1].Value }
+    return $null
+}
 function Update-PlayitLabel {
     # Playit's own output is not shown anywhere; drain it so it doesn't pile up in memory
-    if ($script:playit) { $x = $null; while ($script:playit.Lines.TryDequeue([ref]$x)) { } }
+    # (its console output may carry the tunnel address too, so look before throwing it away)
+    $found = $null
+    if ($script:playit) {
+        $x = $null
+        while ($script:playit.Lines.TryDequeue([ref]$x)) { if (-not $found -and $x -match '\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(joinmc\.link|ply\.gg)(:\d{2,5})?\b') { $found = $Matches[0] } }
+    }
+    if ($script:playit -and $script:playit.Running -and -not (Get-PlayitAddress)) {
+        if (-not $found) { $found = Find-PlayitAddressInLog }
+        if ($found) { Set-PlayitAddress $found }
+    }
     $exe = Join-Path $PlayitDir 'playit.exe'
     if (-not (Test-Path -LiteralPath $exe)) { $lblPlayit.ForeColor = [Drawing.Color]::Firebrick; $lblPlayit.Text = "Playit: 프로그램 파일이 없어요`n(_program\playit\playit.exe)"; return }
     if (-not (Get-PlayitKey)) {
@@ -796,15 +899,22 @@ function Update-PlayitLabel {
         $last = ''
         try { $last = (Get-Content -LiteralPath $PlayitLog -Tail 1 -ErrorAction Stop) -replace '^\S+\s+(INFO|WARN|ERROR)\s+\S+:\s*', '' } catch { }
         if ($last.Length -gt 80) { $last = $last.Substring(0, 80) + '...' }
+        $addr = Get-PlayitAddress; if ($addr) { $last = "주소: $addr" }
         $lblPlayit.ForeColor = [Drawing.Color]::ForestGreen; $lblPlayit.Text = "Playit: 실행 중`n$last"; return
     }
     $lblPlayit.ForeColor = [Drawing.Color]::DimGray; $lblPlayit.Text = "Playit: 준비됨`n서버를 켜면 같이 켜져요."
 }
 $btnPlayit.Add_Click({ Show-PlayitSetup })
+$btnCopyAddr.Add_Click({
+        $a = Get-PlayitAddress
+        if (-not $a) { Show-PlayitSetup; return }
+        [Windows.Forms.Clipboard]::SetText($a)
+        $lblStage.Text = "주소를 복사했어요: $a   → 카톡이나 디스코드에 붙여 넣어서 친구에게 보내 주세요."
+    })
 
 function Show-PlayitSetup {
     $f = New-Object Windows.Forms.Form
-    $f.Text = 'Playit 연결 설정'; $f.Size = New-Object Drawing.Size(640, 470); $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.Font = $font
+    $f.Text = 'Playit 연결 설정'; $f.Size = New-Object Drawing.Size(640, 530); $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.Font = $font
     $t = New-Ctl Label 15 12 600 60 "Playit은 친구들이 들어올 인터넷 주소를 만들어 주는 무료 서비스예요.`n아래 순서대로 한 번만 하면 돼요."
     $s1 = New-Ctl Label 15 80 600 24 '① playit.gg 에 로그인(가입)한 뒤, 아래 버튼으로 "비밀 키(Secret Key)"를 만드세요.'
     $b1 = New-Ctl Button 15 106 300 34 '비밀 키 만드는 페이지 열기'
@@ -813,8 +923,10 @@ function Show-PlayitSetup {
     $bs = New-Ctl Button 505 176 105 32 '저장'
     $s3 = New-Ctl Label 15 220 600 44 "③ playit.gg 의 Tunnels(터널) 메뉴에서 [Add Tunnel] 을 누르고`n    종류 Minecraft Java, 주소 127.0.0.1, 포트 25565 로 터널을 만드세요."
     $b3 = New-Ctl Button 15 268 300 34 '터널 페이지 열기'
-    $s4 = New-Ctl Label 15 315 600 44 "④ 터널 목록에 나온 주소(예: 어쩌구.joinmc.link)를 친구들에게 알려 주세요.`n    이 주소는 바뀌지 않아요."
-    $warn = New-Ctl Label 15 365 600 60 "비밀 키는 비밀번호 같은 거예요. 다른 사람에게 보여 주거나 보내지 마세요.`n저장한 키는 이 PC에서만 풀리게 암호화돼요. 다른 PC로 옮기면 한 번 다시 넣어야 해요."; $warn.ForeColor = [Drawing.Color]::Firebrick
+    $s4 = New-Ctl Label 15 315 600 44 "④ 터널 목록에 나온 주소(예: 어쩌구.joinmc.link)를 복사해서 아래 칸에 붙여 넣고 [저장]을 누르세요.`n    주소는 바뀌지 않아요. 친구 접속 안내와 화면에 자동으로 넣어 줘요."
+    $ta = New-Ctl TextBox 15 362 480 28; $ta.Text = Get-PlayitAddress
+    $ba = New-Ctl Button 505 360 105 32 '저장'
+    $warn = New-Ctl Label 15 412 600 60 "비밀 키는 비밀번호 같은 거예요. 다른 사람에게 보여 주거나 보내지 마세요.`n저장한 키는 이 PC에서만 풀리게 암호화돼요. 다른 PC로 옮기면 한 번 다시 넣어야 해요."; $warn.ForeColor = [Drawing.Color]::Firebrick
     $b1.Add_Click({ Open-Url 'https://playit.gg/account/setup/wizard/new-account/docker/docker-name' })
     $b3.Add_Click({ Open-Url 'https://playit.gg/account/tunnels' })
     $bs.Add_Click({
@@ -831,7 +943,15 @@ function Show-PlayitSetup {
             Update-PlayitLabel
             Show-Msg '저장했어요. 서버를 켜면 Playit도 같이 켜져요.'
         })
-    $f.Controls.AddRange(@($t, $s1, $b1, $s2, $tk, $bs, $s3, $b3, $s4, $warn))
+    $ba.Add_Click({
+            if (-not $ta.Text.Trim()) { Set-PlayitAddress ''; Update-PlayitLabel; Show-Msg '주소를 지웠어요.'; return }
+            $a = ConvertTo-PlayitAddress $ta.Text
+            if (-not $a -or $a -match '^(www\.)?playit\.gg$') { Show-Msg "주소가 올바르지 않은 것 같아요.`nplayit.gg 의 터널 목록에 나온 '어쩌구.joinmc.link' 같은 주소를 그대로 복사해서 넣어 주세요."; return }
+            $ta.Text = $a
+            Set-PlayitAddress $a; Update-PlayitLabel
+            Show-Msg "저장했어요: $a`n이제 [친구 접속 안내]에 이 주소가 자동으로 들어가요."
+        })
+    $f.Controls.AddRange(@($t, $s1, $b1, $s2, $tk, $bs, $s3, $b3, $s4, $ta, $ba, $warn))
     [void]$f.ShowDialog($form)
 }
 
@@ -844,9 +964,29 @@ function Update-FriendGuide($d) {
     $g = Join-Path $d '친구접속안내.txt'
     $text = ''; if (Test-Path -LiteralPath $g) { $text = [IO.File]::ReadAllText($g, $Cp949) }
     $text = ($text -replace '(?s)\r?\n\[ 추가 모드 \].*$', '').TrimEnd()
+    # Step 3 carries the Playit address once the host has saved it, so the copied guide is complete on its own
+    $addr = Get-PlayitAddress
+    $step3 = '3. 게임 실행 -> 멀티플레이 -> 서버 추가 -> 방장이 알려준 주소 입력'
+    if ($addr) { $step3 = "3. 게임 실행 -> 멀티플레이 -> 서버 추가 -> 서버 주소에  $addr  입력" }
+    $text = $text -replace '(?m)^3\. 게임 실행 -> 멀티플레이 -> 서버 추가 -> [^\r\n]*', $step3.Replace('$', '$$')
+    # The easy way goes first: this program on the friend's PC reads the join code and does everything
+    $text = $text -replace '(?s)\[ 제일 쉬운 방법 \].*?\[ 직접 하는 방법 \][^\r\n]*\r?\n', ''
+    $code = Get-JoinCode $d
+    if ($code) {
+        $nl = $text.IndexOf("`n"); if ($nl -lt 0) { $nl = $text.Length - 1 }
+        $easy = "[ 제일 쉬운 방법 ]  프로그램이 모드팩 설치부터 서버 접속 준비까지 다 해 줘요`r`n" +
+        "1. '모드팩서버관리' 프로그램 받기: $ProgramZipUrl`r`n" +
+        "   (받은 파일 오른쪽 클릭 -> [압축 풀기] -> 모드팩서버관리.exe 실행. 파란 경고창이 뜨면 [추가 정보] -> [실행])`r`n" +
+        "2. [친구 서버 들어가기] 탭 -> 이 글을 통째로 붙여 넣기 -> [설치하고 게임 켜기]`r`n" +
+        "3. 마인크래프트 런처가 열리면 '모드팩: ...' 을 고르고 [플레이] -> 멀티플레이 -> 서버 접속`r`n" +
+        "   (방장에게 내 닉네임을 꼭 알려 주세요. 화이트리스트에 있어야 들어올 수 있어요)`r`n" +
+        "접속 코드: $code`r`n`r`n" +
+        "[ 직접 하는 방법 ]  CurseForge/Modrinth 앱을 쓸 때`r`n"
+        $text = $text.Substring(0, $nl + 1) + "`r`n" + $easy + $text.Substring($nl + 1).TrimStart("`r", "`n")
+    }
     $client = @(Get-AddedMods $d | Where-Object { $_.forClient })
     if ($client.Count) {
-        $text += "`r`n`r`n[ 추가 모드 ]  방장이 따로 넣은 모드예요. 꼭 같이 넣어야 접속돼요!`r`n"
+        $text += "`r`n`r`n[ 추가 모드 ]  방장이 따로 넣은 모드예요. 꼭 같이 넣어야 접속돼요! (제일 쉬운 방법으로 하면 자동으로 들어가요)`r`n"
         $text += "  방장이 보내 준 '친구용_추가모드' 폴더의 파일을 모두 내 모드팩의 mods 폴더에 넣으세요.`r`n"
         $text += "  (CurseForge/Modrinth 앱에서 모드팩 오른쪽 위 점 3개 -> Open Folder -> mods)`r`n"
         foreach ($m in $client) { $text += "  - $($m.title)  ($($m.file))`r`n" }
@@ -1134,6 +1274,7 @@ function Test-ServerRunning($d) {
     try { $fs = [IO.File]::Open($lock, 'Open', 'ReadWrite', 'None'); $fs.Close(); return $false } catch { return $true }
 }
 function Assert-ServerOff($d) {
+    if ($script:autoBk -and $script:autoBk.dir -eq $d) { Show-Msg '지금 월드를 자동으로 백업하고 있어요. 위의 상태가 "꺼짐"이 된 다음에 해 주세요. (잠깐이면 돼요)'; return $false }
     if (-not (Test-ServerRunning $d)) { return $true }
     $how = '[■ 서버 끄기]를 누르고 "꺼짐"이 된 다음에 해 주세요.'
     if (-not ($script:srv -and $script:srv.dir -eq $d)) { $how = "이 프로그램 밖에서 켜진 서버예요. 프로그램을 닫았다가 다시 켜면 찾아서 안전하게 꺼 드려요." }
@@ -1169,7 +1310,8 @@ function Stop-Orphans([switch]$Ask) {
 }
 function Stop-OrphanPlayit {
     # A Playit started by an earlier, crashed session would clash with the one this session starts
-    Get-CimInstance Win32_Process -Filter "Name='playit.exe'" | Where-Object { $_.CommandLine -match 'playitd-mcserver' } |
+    # Only this package's own copy: another copy of the program on the same PC may be running its own Playit
+    Get-CimInstance Win32_Process -Filter "Name='playit.exe'" | Where-Object { $_.CommandLine -match 'playitd-mcserver' -and $_.ExecutablePath -like "$PlayitDir\*" } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 
@@ -1206,17 +1348,62 @@ function Repair-Leftovers {
 }
 
 # ---------------- backups and world reset (all in-app, server must be off) ----------------
-function New-WorldBackup($d, [string]$tag) {
+function Start-ZipProc($w, $out) {
     # Zips the world in a background PowerShell so the window stays responsive on big worlds
+    $cmd = "Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::CreateFromDirectory('$($w -replace "'", "''")', '$($out -replace "'", "''")')"
+    return New-Object McProc('powershell.exe', "-NoProfile -Command `"$cmd`"", (Split-Path $out -Parent), [Text.Encoding]::Default.CodePage)
+}
+function New-WorldBackup($d, [string]$tag) {
     $w = Get-LevelDir $d
     if (-not (Test-Path -LiteralPath $w)) { return $null }
     $bk = Join-Path $d 'backups'; New-Item -ItemType Directory -Force $bk | Out-Null
     $zip = Join-Path $bk ("${tag}_" + (Get-Date -Format 'yyyyMMdd_HHmmss') + '.zip')
-    $cmd = "Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::CreateFromDirectory('$($w -replace "'", "''")', '$($zip -replace "'", "''")')"
-    $p = New-Object McProc('powershell.exe', "-NoProfile -Command `"$cmd`"", $d, [Text.Encoding]::Default.CodePage)
+    # Written under a temporary name: a half-made zip must never show up as a backup you can restore
+    $p = Start-ZipProc $w "$zip.part"
     while ($p.Running) { Pump 300 }
-    if ((Test-Path -LiteralPath $zip) -and (Get-Item -LiteralPath $zip).Length -gt 0) { return $zip }
+    if ((Test-Path -LiteralPath "$zip.part") -and (Get-Item -LiteralPath "$zip.part").Length -gt 0) { Move-Item -LiteralPath "$zip.part" -Destination $zip; return $zip }
+    Remove-Item -LiteralPath "$zip.part" -Force -ErrorAction SilentlyContinue
     return $null
+}
+
+# Every clean stop leaves a backup behind, so a beginner always has yesterday's world even if they never pressed a button
+$AutoBackupKeep = 5
+$script:autoBk = $null
+function Start-AutoBackup($d) {
+    $w = Get-LevelDir $d
+    if (-not (Test-Path -LiteralPath (Join-Path $w 'level.dat'))) { return }
+    $bk = Join-Path $d 'backups'; New-Item -ItemType Directory -Force $bk | Out-Null
+    Get-ChildItem -LiteralPath $bk -Filter '*.part' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    $size = [long](Get-ChildItem -LiteralPath $w -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+    $drive = New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($d))
+    if ($drive.AvailableFreeSpace -lt ($size + 2GB)) {
+        $txtConsole.AppendText("[관리 프로그램] 디스크 공간이 모자라서 이번에는 자동 백업을 건너뛰었어요. 오래된 백업이나 servers_old 폴더를 지우면 공간이 생겨요.`r`n")
+        return
+    }
+    $zip = Join-Path $bk ('auto_' + (Get-Date -Format 'yyyyMMdd_HHmmss') + '.zip')
+    $script:autoBk = [pscustomobject]@{ proc = (Start-ZipProc $w "$zip.part"); dir = $d; zip = $zip }
+    $btnStart.Enabled = $false; $btnLocal.Enabled = $false
+    Set-State '● 자동 백업 중...  (금방 끝나요)' ([Drawing.Color]::SlateGray)
+    $lblStage.Text = '서버는 안전하게 꺼졌어요. 월드를 자동으로 백업하고 있어요.'
+}
+function Complete-AutoBackup {
+    $b = $script:autoBk; $script:autoBk = $null
+    if (-not $b) { return }
+    $part = "$($b.zip).part"
+    $btnStart.Enabled = -not $script:srv; $btnLocal.Enabled = -not $script:srv
+    if ((Test-Path -LiteralPath $part) -and (Get-Item -LiteralPath $part).Length -gt 0) {
+        Move-Item -LiteralPath $part -Destination $b.zip
+        # Only the automatic ones are pruned; backups the user made by hand stay until they delete them
+        Get-ChildItem -LiteralPath (Split-Path $b.zip -Parent) -Filter 'auto_*.zip' | Sort-Object Name -Descending | Select-Object -Skip $AutoBackupKeep |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+        $txtConsole.AppendText("[관리 프로그램] 월드를 자동으로 백업했어요: $(Split-Path $b.zip -Leaf) (최근 $($AutoBackupKeep)개만 남겨요)`r`n")
+        if (-not $script:srv) { Set-State '● 꺼짐' ([Drawing.Color]::Gray); $lblStage.Text = '서버가 안전하게 꺼졌고, 월드도 자동으로 백업했어요.' }
+    }
+    else {
+        Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
+        $txtConsole.AppendText("[관리 프로그램] 자동 백업을 만들지 못했어요. [백업 / 월드 관리] → [지금 백업하기]로 한 번 해 주세요.`r`n")
+        if (-not $script:srv) { Set-State '● 꺼짐' ([Drawing.Color]::Gray); $lblStage.Text = '서버는 안전하게 꺼졌어요. (자동 백업은 실패했어요)' }
+    }
 }
 function Restore-WorldBackup($d, [string]$zip) {
     $w = Get-LevelDir $d
@@ -1235,7 +1422,7 @@ function Show-Backups {
     $d = Get-SelDir; if (-not $d) { return }
     $f = New-Object Windows.Forms.Form
     $f.Text = "백업 / 월드 관리 - $($lstSrv.SelectedItem)"; $f.Size = New-Object Drawing.Size(760, 520); $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.Font = $font
-    $l1 = New-Ctl Label 15 12 720 40 "백업은 서버 폴더의 backups 에 저장돼요. 아래 기능은 모두 서버를 끈 상태에서만 돼요.`n되돌리거나 새로 만들기 전에 지금 월드를 자동으로 한 번 더 백업해요."
+    $l1 = New-Ctl Label 15 12 720 40 "서버를 끌 때마다 자동으로 백업해요(auto_, 최근 $($AutoBackupKeep)개). 아래 기능은 모두 서버를 끈 상태에서만 돼요.`n되돌리거나 새로 만들기 전에 지금 월드를 자동으로 한 번 더 백업해요."
     $lv = New-Object Windows.Forms.ListView; $lv.Location = New-Object Drawing.Point(15, 58); $lv.Size = New-Object Drawing.Size(715, 280); $lv.View = 'Details'; $lv.FullRowSelect = $true; $lv.Font = $font
     [void]$lv.Columns.Add('백업', 360); [void]$lv.Columns.Add('만든 때', 190); [void]$lv.Columns.Add('크기', 140)
     $bNow = New-Ctl Button 15 348 230 38 '지금 백업하기'
@@ -1394,6 +1581,217 @@ function Show-FriendGuide {
 }
 
 # =====================================================================================
+# Playing: the same modpack as a game installation in the official Minecraft Launcher
+# (install.ps1 -Client does the work; logging in stays with the launcher and the player's account)
+# =====================================================================================
+$ProgramZipUrl = 'https://github.com/epaldks10-ship-it/mc-modpack-server-manager-release/releases/latest/download/ModpackServerManager.zip'
+function Get-McDirPath { if ($env:MCSM_MCDIR) { return $env:MCSM_MCDIR } return Join-Path $env:APPDATA '.minecraft' }
+function Test-McLauncher {
+    if (Test-Path -LiteralPath (Join-Path (Get-McDirPath) 'launcher_profiles.json')) { return $true }
+    if (Ask-YesNo "공식 마인크래프트 런처를 찾지 못했어요.`n`n① 지금 열리는 페이지에서 런처를 받아 설치`n② 런처를 한 번 켜서 마이크로소프트 계정으로 로그인`n③ 이 버튼을 다시 누르기`n`n다운로드 페이지를 열까요?") { Open-Url 'https://www.minecraft.net/download' }
+    return $false
+}
+function Get-LauncherProcs {
+    if ($env:MCSM_MCDIR) { return @() }   # the simulator never touches the real launcher
+    return @(Get-CimInstance Win32_Process -Filter "Name='Minecraft.exe' OR Name='MinecraftLauncher.exe'" -ErrorAction SilentlyContinue)
+}
+function Close-McLauncher {
+    # The launcher keeps its installation list in memory and writes it back on exit, so it must be closed while we add ours
+    $procs = Get-LauncherProcs
+    if (-not $procs.Count) { return $true }
+    if (-not (Ask-YesNo "마인크래프트 런처가 켜져 있어요.`n런처에 모드팩을 넣으려면 잠깐 닫아야 해요. (다 되면 다시 열어 드려요)`n`n런처를 닫을까요?")) { return $false }
+    foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+    Pump 1500
+    return $true
+}
+function Start-McLauncher {
+    if ($env:MCSM_MCDIR) { return $true }
+    $pkg = Get-AppxPackage -Name 'Microsoft.4297127D64EC6' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($pkg) { Start-Process explorer.exe "shell:AppsFolder\$($pkg.PackageFamilyName)!Minecraft"; return $true }
+    foreach ($exe in @("${env:ProgramFiles(x86)}\Minecraft Launcher\MinecraftLauncher.exe", "$env:ProgramFiles\Minecraft Launcher\MinecraftLauncher.exe", "$env:LOCALAPPDATA\Programs\Minecraft Launcher\MinecraftLauncher.exe")) {
+        if (Test-Path -LiteralPath $exe) { Start-Process -FilePath $exe; return $true }
+    }
+    return $false
+}
+function Test-GameRunning([string]$gd) {
+    return [bool](Get-CimInstance Win32_Process -Filter "Name='javaw.exe' OR Name='java.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($gd) })
+}
+function Get-GameRam([int]$serverRam = 0) {
+    # What is left after Windows (about 3GB) and a server running on the same PC, between 3 and 8GB
+    return [int][Math]::Max(3, [Math]::Min(8, $totalRam - $serverRam - 3))
+}
+
+function Start-HostGame {
+    $d = Get-SelDir; if (-not $d) { Show-Msg '왼쪽 목록에서 서버를 고르세요.'; return }
+    if ($script:installProc) { Show-Msg '다른 설치나 업데이트가 진행 중이에요. 끝난 다음에 해 주세요.'; return }
+    $i = Read-Json (Join-Path $d 'server-info.json'); if (-not $i -or -not $i.pack) { Show-Msg '이 서버의 모드팩 정보를 찾지 못했어요.' 'Warning'; return }
+    if (-not (Test-McLauncher)) { return }
+    $name = $lstSrv.SelectedItem
+    $gd = Join-Path $GameRoot $name
+    if (Test-GameRunning $gd) { Show-Msg '이 서버용 마인크래프트가 이미 켜져 있어요.'; return }
+    # The host needs to be on the whitelist too; ask once here instead of letting the first join bounce
+    $wl = Read-Json (Join-Path $d 'whitelist.json')
+    if (-not @($wl).Count -and -not (Test-Path -LiteralPath (Join-Path $d 'whitelist-pending.txt'))) {
+        $nick = (Ask-Text "내 마인크래프트 닉네임(자바 에디션 계정 이름)을 입력하세요.`n내 서버에 들어가려면 화이트리스트에 내 이름이 있어야 해요.").Trim()
+        if ($nick -match '^[A-Za-z0-9_]{3,16}$') { [void](Add-Whitelist $d $nick) }
+        elseif ($nick) { Show-Msg '마인크래프트 닉네임은 영어, 숫자, _ 로 3~16글자예요. 나중에 [친구 추가]로 넣어 주세요.' }
+    }
+    if (-not (Close-McLauncher)) { return }
+    $sr = 0; if ($totalRam -lt 24) { $sr = Get-ServerRam $d }
+    $script:gameJob = @{ gameDir = $gd }
+    Start-InstallJob "-Client -PackId $($i.pack) -VersionKey `"$($i.version)`" -Name `"$name`" -FromServer `"$d`" -GameDir `"$gd`" -Address localhost -GameRamGB $(Get-GameRam $sr)" 'game'
+}
+$btnPlay.Add_Click({ Start-HostGame })
+
+function Complete-GameJob([bool]$ok) {
+    $kind = $script:jobKind
+    if (-not $ok) {
+        if ($kind -eq 'join') { $lblJoinWork.ForeColor = [Drawing.Color]::Firebrick; $lblJoinWork.Text = "게임 준비에 실패했어요. 이유: $($script:installErr)" }
+        else { $lblStage.Text = "게임 준비에 실패했어요. 이유: $($script:installErr)" }
+        Show-Msg "게임 준비에 실패했어요.`n이유: $($script:installErr)`n`n인터넷을 확인하고 다시 눌러 주세요." 'Warning'
+        return
+    }
+    $m = Read-Json (Join-Path $script:gameJob.gameDir 'mcsm-game.json')
+    $opened = Start-McLauncher
+    $steps = "런처가 열리면:`n① [플레이] 버튼 옆의 설치 목록에서 '$($m.profileName)' 고르기`n② [플레이] → 마인크래프트가 켜지면 [멀티플레이]`n③ 맨 위의 '$($m.serverEntry)' 를 골라 [서버 접속]"
+    if (-not $opened) { $steps = "마인크래프트 런처를 직접 열어 주세요.`n" + $steps }
+    if ($kind -eq 'game') {
+        $lblStage.Text = "게임 준비 완료! 런처에서 '$($m.profileName)' → [플레이] → 멀티플레이 → '$($m.serverEntry)'"
+        if (-not $script:srv) { $steps += "`n`n※ 지금 서버가 꺼져 있어요. 게임이 켜지는 동안 [▶ 친구랑 하기] 또는 [▶ 혼자 하기]로 서버도 켜 주세요." }
+    }
+    else { $lblJoinWork.ForeColor = [Drawing.Color]::DarkGreen; $lblJoinWork.Text = "준비 완료! 런처에서 '$($m.profileName)' → [플레이] → 멀티플레이 → '$($m.serverEntry)'"; Update-JoinedList }
+    if ([int]$m.ramGB -lt 4) { $steps += "`n`n※ 이 컴퓨터 램이 넉넉하지 않아서 게임 램을 $($m.ramGB)GB로 잡았어요. 버벅이면 다른 프로그램을 닫아 주세요." }
+    Show-Msg "게임 준비가 끝났어요!`n`n$steps"
+}
+
+# ---------------- join code: everything a friend's copy needs to set up the same game ----------------
+function ConvertTo-B64Url([string]$s) { return [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($s)).TrimEnd('=').Replace('+', '-').Replace('/', '_') }
+function ConvertFrom-B64Url([string]$s) {
+    $s = $s.Replace('-', '+').Replace('_', '/'); while ($s.Length % 4) { $s += '=' }
+    return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($s))
+}
+function Get-VersionKey($d, $i) {
+    # CurseForge versions are named by label; Modrinth ones by id (older servers kept only the label, look it up once)
+    if ($i.PSObject.Properties['versionKey'] -and $i.versionKey) { return $i.versionKey }
+    $p = $packs | Where-Object { $_.id -eq $i.pack } | Select-Object -First 1
+    if (-not $p -or $p.source -ne 'modrinth') { return $i.version }
+    try {
+        $v = @(Invoke-Api "https://api.modrinth.com/v2/project/$($p.slug)/version" | ForEach-Object { $_ }) | Where-Object { $_.version_number -eq $i.version } | Select-Object -First 1
+        if ($v) { Set-InfoField $d 'versionKey' $v.id; return $v.id }
+    }
+    catch { }
+    return $i.version
+}
+function Get-JoinCode($d) {
+    $i = Read-Json (Join-Path $d 'server-info.json'); if (-not $i -or -not $i.pack) { return '' }
+    $mods = @(Get-AddedMods $d | Where-Object { $_.forClient -and $_.projectId } | ForEach-Object { [ordered]@{ p = $_.projectId; f = $_.file } })
+    $o = [ordered]@{ v = 1; p = $i.pack; k = (Get-VersionKey $d $i); n = (Split-Path $d -Leaf); a = (Get-PlayitAddress); m = $mods }
+    return 'MCSM1-' + (ConvertTo-B64Url ($o | ConvertTo-Json -Compress -Depth 4))
+}
+function Read-JoinCode([string]$text) {
+    $m = [regex]::Match($text, 'MCSM1-([A-Za-z0-9_-]{8,})'); if (-not $m.Success) { return $null }
+    try { $c = ConvertFrom-B64Url $m.Groups[1].Value | ConvertFrom-Json } catch { return $null }
+    if (-not $c.p -or -not $c.k -or "$($c.n)" -notmatch '^[A-Za-z0-9]([A-Za-z0-9 ._-]{0,58}[A-Za-z0-9_-])?$') { return $null }
+    return $c
+}
+
+# =====================================================================================
+# Tab: join a friend's server
+# =====================================================================================
+$lblJ1 = New-Ctl Label 10 10 940 44 "방장(서버를 연 친구)이 보내 준 [친구 접속 안내] 글을 통째로 아래 칸에 붙여 넣으세요.`n글 안의 접속 코드를 보고 같은 모드팩, 같은 버전, 추가 모드까지 알아서 설치해요. CurseForge 앱은 필요 없어요."
+$txtCode = New-Ctl TextBox 10 58 940 84; $txtCode.Multiline = $true; $txtCode.ScrollBars = 'Vertical'
+$lblJInfo = New-Ctl Label 10 148 940 44 '(아직 붙여 넣지 않았어요)'; $lblJInfo.ForeColor = [Drawing.Color]::DimGray
+$lblJAddr = New-Ctl Label 10 200 100 24 '서버 주소'
+$txtJAddr = New-Ctl TextBox 110 197 360 28
+$lblJRam = New-Ctl Label 500 200 110 24 '게임 램(GB)'
+$numJRam = New-Ctl NumericUpDown 610 197 60 28; $numJRam.Minimum = 2; $numJRam.Maximum = [Math]::Max(2, $totalRam - 2); $numJRam.Value = [Math]::Min($numJRam.Maximum, (Get-GameRam 0))
+$btnJoin = New-Ctl Button 10 236 300 48 '▶ 설치하고 게임 켜기'; $btnJoin.Font = $bold; $btnJoin.BackColor = [Drawing.Color]::FromArgb(214, 240, 214)
+$lblJoinWork = New-Ctl Label 320 236 630 48 ''; $lblJoinWork.ForeColor = [Drawing.Color]::DarkGreen
+$lblJList = New-Ctl Label 10 296 400 22 '설치해 둔 친구 서버 (다음부터는 여기서 바로 켜요)'
+$lstJoined = New-Ctl ListBox 10 320 400 210
+$btnJoinAgain = New-Ctl Button 10 536 195 38 '▶ 게임 켜기'; $btnJoinAgain.Font = $bold
+$btnJoinDel = New-Ctl Button 215 536 195 38 '지우기'
+$txtJoinLog = New-Ctl TextBox 420 296 530 320; $txtJoinLog.Multiline = $true; $txtJoinLog.ReadOnly = $true; $txtJoinLog.ScrollBars = 'Vertical'; $txtJoinLog.Font = $mono; $txtJoinLog.BackColor = [Drawing.Color]::White
+$tabJoin.Controls.AddRange(@($lblJ1, $txtCode, $lblJInfo, $lblJAddr, $txtJAddr, $lblJRam, $numJRam, $btnJoin, $lblJoinWork, $lblJList, $lstJoined, $btnJoinAgain, $btnJoinDel, $txtJoinLog))
+
+$script:joinCode = $null
+$txtCode.Add_TextChanged({
+        $c = Read-JoinCode $txtCode.Text
+        $script:joinCode = $c
+        if (-not $c) {
+            $lblJInfo.ForeColor = [Drawing.Color]::Firebrick
+            $lblJInfo.Text = '접속 코드(MCSM1-로 시작)를 찾지 못했어요. 방장에게 [친구 접속 안내]의 [글 전체 복사]로 다시 받아 주세요.'
+            if (-not $txtCode.Text.Trim()) { $lblJInfo.ForeColor = [Drawing.Color]::DimGray; $lblJInfo.Text = '(아직 붙여 넣지 않았어요)' }
+            return
+        }
+        $p = $packs | Where-Object { $_.id -eq $c.p } | Select-Object -First 1
+        $ver = $c.k; if ($p -and $p.source -eq 'curseforge' -and -not ($p.versions | Where-Object label -eq $c.k)) { $p = $null }
+        if (-not $p) { $lblJInfo.ForeColor = [Drawing.Color]::Firebrick; $lblJInfo.Text = '이 프로그램이 모르는 모드팩이나 버전이에요. 프로그램을 껐다가 다시 켜서 최신 버전으로 업데이트한 다음 다시 붙여 넣어 주세요.'; $script:joinCode = $null; return }
+        $lblJInfo.ForeColor = [Drawing.Color]::DarkGreen
+        $lblJInfo.Text = "서버: $($c.n)   |   모드팩: $($p.name)   |   방장이 추가한 모드: $(@($c.m).Count)개`n아래 [▶ 설치하고 게임 켜기]를 누르세요."
+        if ($c.a) { $txtJAddr.Text = $c.a }
+    })
+function ConvertTo-ModsB64($list) {
+    # Written by hand: Windows PowerShell 5.1 re-serializes arrays that came out of ConvertFrom-Json as {"value":[...],"Count":n}
+    $items = @(foreach ($x in @($list)) {
+            if ("$($x.p)" -match '^[A-Za-z0-9]{4,16}$' -and "$($x.f)" -match '^[A-Za-z0-9 ._+()\[\]-]+\.jar$') { '{"p":"' + $x.p + '","f":"' + $x.f + '"}' }
+        })
+    if (-not $items.Count) { return '' }
+    return [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('[' + ($items -join ',') + ']'))
+}
+function Start-JoinGame($c, [string]$addr, [int]$ram, $modsB64 = $null) {   # untyped: a [string] parameter would turn $null into ''
+    if ($script:installProc) { Show-Msg '다른 설치가 진행 중이에요. 끝난 다음에 해 주세요.'; return }
+    if ($addr -match '^\s*localhost\s*$') { $addr = 'localhost' } else { $addr = ConvertTo-PlayitAddress $addr }
+    if (-not $addr) { Show-Msg "서버 주소를 넣어 주세요.`n방장에게 '어쩌구.joinmc.link' 같은 주소를 물어봐서 [서버 주소] 칸에 넣으면 돼요."; return }
+    if (-not (Test-McLauncher)) { return }
+    $gd = Join-Path $GameRoot "join-$($c.n)"
+    if (Test-GameRunning $gd) { Show-Msg '이 서버용 마인크래프트가 이미 켜져 있어요.'; return }
+    if (-not (Close-McLauncher)) { return }
+    $mods = $modsB64; if ($null -eq $mods) { $mods = ConvertTo-ModsB64 $c.m }
+    $script:gameJob = @{ gameDir = $gd }
+    $tabs.SelectedTab = $tabJoin
+    Start-InstallJob "-Client -PackId $($c.p) -VersionKey `"$($c.k)`" -Name `"$($c.n)`" -GameDir `"$gd`" -Address `"$addr`" -AddedMods `"$mods`" -GameRamGB $ram" 'join'
+}
+$btnJoin.Add_Click({
+        if (-not $script:joinCode) { Show-Msg '먼저 방장이 보내 준 안내 글(접속 코드)을 위 칸에 붙여 넣어 주세요.'; return }
+        Start-JoinGame $script:joinCode $txtJAddr.Text ([int]$numJRam.Value)
+    })
+$script:joined = @()
+function Update-JoinedList {
+    $lstJoined.Items.Clear(); $script:joined = @()
+    foreach ($g in @(Get-ChildItem -LiteralPath $GameRoot -Directory -Filter 'join-*' -ErrorAction SilentlyContinue)) {
+        $m = Read-Json (Join-Path $g.FullName 'mcsm-game.json'); if (-not $m) { continue }
+        $script:joined += , @($g.FullName, $m)
+        [void]$lstJoined.Items.Add("$($m.name)  -  $($m.packName) $($m.version)  ($($m.address))")
+    }
+    if ($lstJoined.Items.Count) { $lstJoined.SelectedIndex = 0 }
+}
+$btnJoinAgain.Add_Click({
+        if ($lstJoined.SelectedIndex -lt 0) { Show-Msg '목록에서 친구 서버를 고르세요.'; return }
+        $m = $script:joined[$lstJoined.SelectedIndex][1]
+        # The same added-mods value as last time, untouched, so an unchanged game is recognised and left alone
+        $c = [pscustomobject]@{ p = $m.pack; k = $m.versionKey; n = $m.name }
+        Start-JoinGame $c $m.address ([int]$m.ramGB) ([string]$m.addedMods)
+    })
+$btnJoinDel.Add_Click({
+        if ($lstJoined.SelectedIndex -lt 0) { return }
+        $g = $script:joined[$lstJoined.SelectedIndex]
+        if (-not (Ask-YesNo "'$($g[1].name)' 게임 폴더를 지울까요?`n(모드팩 파일과 이 서버용 설정, 스크린샷이 지워져요. 서버의 월드는 방장 PC에 있어서 괜찮아요)")) { return }
+        if (Test-GameRunning $g[0]) { Show-Msg '이 서버용 마인크래프트가 켜져 있어요. 게임을 끈 다음 다시 해 주세요.'; return }
+        if (-not (Close-McLauncher)) { return }
+        try {
+            $pf = Join-Path (Get-McDirPath) 'launcher_profiles.json'
+            $j = Get-Content -LiteralPath $pf -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($j.profiles.PSObject.Properties[$g[1].profile]) { $j.profiles.PSObject.Properties.Remove($g[1].profile); [IO.File]::WriteAllText($pf, ($j | ConvertTo-Json -Depth 20), $Utf8) }
+        }
+        catch { }
+        & robocopy.exe (New-Item -ItemType Directory -Force (Join-Path $env:TEMP 'mcsm-empty')).FullName $g[0] /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+        Remove-Item -LiteralPath $g[0] -Recurse -Force -ErrorAction SilentlyContinue
+        Update-JoinedList
+    })
+Update-JoinedList
+
+# =====================================================================================
 # Tab: manual (local file, works offline and without any login)
 # =====================================================================================
 $web = New-Object Windows.Forms.WebBrowser
@@ -1411,6 +1809,7 @@ $uiTimer = New-Object Windows.Forms.Timer; $uiTimer.Interval = 250
 $script:tick = 0
 $uiTimer.Add_Tick({
         Read-ServerOutput
+        if ($script:autoBk -and -not $script:autoBk.proc.Running) { Complete-AutoBackup }
         $script:tick++
         if ($script:tick % 12 -eq 0) { Update-PlayitLabel }
     })
@@ -1430,6 +1829,14 @@ $form.Add_FormClosing({
             $sw = [Diagnostics.Stopwatch]::StartNew()
             while ($script:srv -and $sw.Elapsed.TotalSeconds -lt $limit) { Pump 250; Read-ServerOutput }
             if ($script:srv) { $script:srv.proc.Kill() }
+        }
+        if ($script:autoBk) {
+            # Let the automatic backup finish; a shutdown has no time for it, and a half-made zip is thrown away
+            $limit = 600; if ($shutdown) { $limit = 0 }
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            while ($script:autoBk -and $script:autoBk.proc.Running -and $sw.Elapsed.TotalSeconds -lt $limit) { Pump 250 }
+            if ($script:autoBk -and $script:autoBk.proc.Running) { $script:autoBk.proc.Kill(); Pump 500 }
+            Complete-AutoBackup
         }
         if ($script:playit) { $script:playit.Kill() }
     })
@@ -1452,6 +1859,7 @@ $form.Add_Shown({
 
 Update-Servers
 Update-PlayitLabel
+if (-not (Get-PlayitAddress)) { $btnCopyAddr.Text = '친구에게 줄 주소 넣기' }
 if ($lstSrv.Items.Count) { $tabs.SelectedTab = $tabMy } else { $tabs.SelectedTab = $tabNew }
 $uiTimer.Start()
 [void]$form.ShowDialog()
