@@ -12,7 +12,7 @@
       "ramGB": 8,
       "clientHow": "CurseForge 앱에서 'Medieval MC [FORGE] MMC4' 검색 후 같은 버전 설치",
       "versions": [
-        { "label": "v39", "date": "2026-02-26", "url": "https://mediafilez.forgecdn.net/files/7683/69/SERVER_ONLY_MMC4_v39.zip", "size": 1437317917 },
+        { "label": "v39", "date": "2026-02-26", "url": "https://mediafilez.forgecdn.net/files/7683/69/SERVER_ONLY_MMC4_v39.zip", "size": 1437317917, "sha256": "deead65477914b6b9b37d7bc1befc8a23cb4ecf57c9e87db4ec7799a2639319d" },
         { "label": "v38", "date": "2025-12-04", "url": "https://mediafilez.forgecdn.net/files/7292/411/SERVER_ONLY_MMC4_v38.zip", "size": 1408573299 },
         { "label": "v37 HF", "date": "2025-11-15", "url": "https://mediafilez.forgecdn.net/files/7225/468/SERVER_ONLY_MMC4_v37HF.zip", "size": 1403529876 },
         { "label": "v37", "date": "2025-11-14", "url": "https://mediafilez.forgecdn.net/files/7221/301/SERVER_ONLY_MMC4_v37.zip", "size": 1404770446 }

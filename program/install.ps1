@@ -65,7 +65,10 @@ function Get-Download([string]$Url, [string]$OutFile, [long]$Size = 0, [string]$
     $err = ''; if (Test-Path -LiteralPath $errFile) { $err = (Get-Content -LiteralPath $errFile -Raw); Remove-Item -LiteralPath $errFile -ErrorAction SilentlyContinue }
     if ($p.ExitCode -ne 0) { throw "다운로드 실패: $Url $err" }
     Move-Item -Force -LiteralPath $tmp -Destination $OutFile
-    if (-not (Test-Ok)) { throw "받은 파일이 손상됐어요 (크기/해시 불일치): $(Split-Path $OutFile -Leaf)" }
+    if (-not (Test-Ok)) {
+        Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
+        throw "받은 파일이 손상됐거나 바뀌었어요 (크기/해시 불일치): $(Split-Path $OutFile -Leaf)`n잠시 뒤에 다시 해 보고, 계속 이러면 프로그램을 업데이트해 주세요."
+    }
 }
 
 function Assert-FreeSpace([long]$needBytes) {
@@ -351,7 +354,9 @@ try {
         $need = [long]($ver.size * 1.6) + 700MB
         if (-not ((Test-Path -LiteralPath $zip) -and (Get-Item -LiteralPath $zip).Length -eq $ver.size)) { $need += $ver.size }
         Assert-FreeSpace $need
-        Get-Download $ver.url $zip -Size $ver.size
+        # sha256 is recorded for versions whose server pack was downloaded and checked once; the rest rely on size and HTTPS
+        $sha = ''; if ($ver.PSObject.Properties['sha256']) { $sha = [string]$ver.sha256 }
+        Get-Download $ver.url $zip -Size $ver.size -Sha256 $sha
 
         Step '압축 푸는 중'
         [IO.Compression.ZipFile]::ExtractToDirectory($zip, $tmp)
@@ -480,11 +485,21 @@ try {
     }
 
     if (-not $li.version) { throw '모드 로더 버전을 알아내지 못했어요.' }
+    # These values come from the pack's own files and end up in download URLs and 서버켜기.bat
+    if ($li.version -notmatch '^[A-Za-z0-9._+-]+$' -or "$($li.mc)" -notmatch '^[0-9][0-9.]*$') {
+        throw "모드팩 안의 버전 정보가 이상해요 (마인크래프트 '$($li.mc)', 로더 '$($li.version)'). 다른 버전을 골라 주세요."
+    }
     $major = Get-JavaMajor $li.mc
     $java = Get-Java $major
     $launch = Install-Loader $dir $li $java
 
     Step '서버 설정 정리 중'
+    # A pack can ship its author's admin list and whitelist; only the host decides who gets in and who is admin.
+    # (An update brings the host's own lists over from the old server afterwards.)
+    foreach ($f in 'ops.json', 'whitelist.json') {
+        $fp = Join-Path $dir $f
+        if (Test-Path -LiteralPath $fp) { Remove-Item -LiteralPath $fp -Force; Info "모드팩에 들어 있던 $f 는 지웠어요 (모드팩 제작자 쪽 목록이라서요)" }
+    }
     # Datapacks shipped at the top level belong inside the world folder
     $dp = Join-Path $dir 'datapacks'
     if ((Test-Path $dp) -and -not (Test-Path (Join-Path $dir 'world'))) {

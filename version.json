@@ -1,19 +1,19 @@
 {
-    "version":  "1.0.3",
+    "version":  "1.0.4",
     "date":  "2026-10-16",
-    "notes":  "실행 파일(모드팩서버관리.exe)도 자동으로 업데이트돼요.",
+    "notes":  "Playit 없이 [친구랑 하기]로 켰을 때 \u0027친구들이 들어올 수 있어요\u0027라고 잘못 나오던 문제를 고쳤어요. 모드팩 설치 보안을 강화했어요(모드팩에 든 관리자 목록 삭제, 서버팩 파일 검사).",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "b6bbecb66145759ae90ce9146eeb90d572210812fc692b6c35158e67804a0d52"
+                      "sha256":  "dd868edbfd68782017e5622516691af87ecfa52c940a2ce6a7bce26c5e6f623f"
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "bf765dea9d81fad23c7da1b2d84f0b4965b29595cdfa28839a0e5063a3905411"
+                      "sha256":  "da9b34700df8ce380a921620b2e8e2f128bb8518c7b9c80da7b4ab6e764fff27"
                   },
                   {
                       "path":  "packs.json",
-                      "sha256":  "385a41c85bbf7b2d1ef7f08dae14a4d404b13d78ddb2e32a11abaf5b2cf782e5"
+                      "sha256":  "94d2131c7b74003394659f813a6eba94964efa68e75fc8a463c74db215b573aa"
                   },
                   {
                       "path":  "client-only-mods.txt",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "1a9beb3fe65bb32e32b4fede67232ef68089c8d0569cf93765d23c609b0148e4"
+                      "sha256":  "4f5637c9fe5a020691daa59d9a687a8316779ad4a1d6a57aa4ac0a483be109a8"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "20d2cb096d1ab41a4140246d12f07bf6b8cb743fd48122b72532c03d44c5c14a"
+                      "sha256":  "aea5adbef574785273c4f39c1b7687cf801993e0cb6bf6781a41689e4edbb20c"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "114a807d21375699885b6b5ee8818c3e941ffbc78d958d8b6260663faa451cfb"
+                     "sha256":  "a080df8f5c2c3c3a7ab19f9806a1a2c079731b80574bd9a281cda513a4857045"
                  }
 }

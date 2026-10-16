@@ -545,6 +545,7 @@ function Start-Server([switch]$Local) {
     $java = Join-Path $Prog "java\$($li.major)\bin\java.exe"
     if (-not (Test-Path -LiteralPath $java)) { Show-Msg "Java $($li.major) 이(가) 없어요. _program\java 폴더를 확인하세요." 'Error'; return }
 
+    $why = ''
     if ($Local) {
         # "혼자 하기" promises nobody else can join, so a Playit left over from an earlier "친구랑 하기" must go
         if ($script:playit) { $script:playit.Kill(); $script:playit = $null }
@@ -569,7 +570,7 @@ function Start-Server([switch]$Local) {
     $script:srv = [pscustomobject]@{
         dir = $d; name = $lstSrv.SelectedItem; proc = $proc; sw = [Diagnostics.Stopwatch]::StartNew(); expect = $expect
         done = $false; stopping = $false; stage = 0; spawn = 0; players = @{}; tail = New-Object System.Collections.Generic.List[string]; stopSw = $null
-        local = [bool]$Local
+        local = [bool]$Local; noPlayit = [bool]$why
     }
     $lstSrv.Enabled = $false; $btnStart.Enabled = $false; $btnLocal.Enabled = $false; $btnStop.Enabled = $true; $btnMods.Enabled = $false; $btnUpdate.Enabled = $false; $btnRamSrv.Enabled = $false
     $prg.Value = 0; $lblPlayers.Text = '접속 0명'
@@ -636,6 +637,23 @@ function Complete-Server {
 }
 
 $StageText = @('Java 시작하는 중', '모드 로더 준비하는 중', '모드 불러오는 중', '월드 불러오는 중', '스폰 지역 만드는 중')
+function Show-OpenBanner($s) {
+    if ($s.local) {
+        Set-State '● 서버 열림!  (혼자 하기: 주소 localhost)' ([Drawing.Color]::ForestGreen)
+        $lblStage.Text = "마인크래프트 → 멀티플레이 → 서버 추가 → 주소에 localhost 입력. 끌 때는 [서버 끄기]."
+    }
+    elseif ($s.noPlayit) {
+        # Started anyway after the "no Playit" warning: say plainly that friends still can't join
+        Set-State '● 서버 열림!  (Playit이 없어서 지금은 나만: 주소 localhost)' ([Drawing.Color]::DarkOrange)
+        if (Test-Path -LiteralPath (Join-Path $PlayitDir 'playit.exe')) { $lblStage.Text = "친구들도 들어오게 하려면 → [Playit 연결 설정]에서 비밀 키를 저장하세요. 서버를 끄지 않아도 바로 연결돼요." }
+        else { $lblStage.Text = "_program\playit\playit.exe 파일이 없어요 (백신이 지웠을 수 있어요). 프로그램 압축 파일을 다시 풀어서 그 파일만 제자리에 넣어 주세요." }
+    }
+    else {
+        Set-State '● 서버 열림!  친구들이 들어올 수 있어요' ([Drawing.Color]::ForestGreen)
+        $lblStage.Text = "켜는 데 $([int]$s.sw.Elapsed.TotalSeconds)초 걸렸어요. 나는 localhost, 친구들은 Playit 주소로 접속. 끌 때는 [서버 끄기]."
+    }
+}
+
 function Read-ServerOutput {
     $s = $script:srv; if (-not $s) { return }
     $sb = New-Object Text.StringBuilder; $line = $null; $n = 0
@@ -651,14 +669,7 @@ function Read-ServerOutput {
             $s.done = $true
             Set-InfoField $s.dir 'bootSeconds' ([int]$s.sw.Elapsed.TotalSeconds)
             $prg.Value = 100
-            if ($s.local) {
-                Set-State '● 서버 열림!  (혼자 하기: 주소 localhost)' ([Drawing.Color]::ForestGreen)
-                $lblStage.Text = "마인크래프트 → 멀티플레이 → 서버 추가 → 주소에 localhost 입력. 끌 때는 [서버 끄기]."
-            }
-            else {
-                Set-State '● 서버 열림!  친구들이 들어올 수 있어요' ([Drawing.Color]::ForestGreen)
-                $lblStage.Text = "켜는 데 $([int]$s.sw.Elapsed.TotalSeconds)초 걸렸어요. 나는 localhost, 친구들은 Playit 주소로 접속. 끌 때는 [서버 끄기]."
-            }
+            Show-OpenBanner $s
             # An empty whitelist locks everyone out, the host included
             $wl = Read-Json (Join-Path $s.dir 'whitelist.json')
             if (-not @($wl).Count -and -not (Test-Path -LiteralPath (Join-Path $s.dir 'whitelist-pending.txt'))) {
@@ -811,7 +822,12 @@ function Show-PlayitSetup {
             if ($k.Length -lt 16 -or $k -match '\s') { Show-Msg '비밀 키가 올바르지 않은 것 같아요. 다시 복사해서 붙여 넣어 주세요.'; return }
             Save-PlayitKey $k
             if ($script:playit) { $script:playit.Kill(); $script:playit = $null }
-            if ($script:srv) { Start-Playit }
+            # A server opened with "혼자 하기" must stay private; one opened with "친구랑 하기" connects right away
+            $s = $script:srv
+            if ($s -and -not $s.local) {
+                Start-Playit
+                if ($s.noPlayit -and $script:playit) { $s.noPlayit = $false; if ($s.done -and -not $s.stopping) { Show-OpenBanner $s } }
+            }
             Update-PlayitLabel
             Show-Msg '저장했어요. 서버를 켜면 Playit도 같이 켜져요.'
         })
