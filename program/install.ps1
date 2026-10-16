@@ -601,6 +601,166 @@ function Get-AddedClientMods([string]$b64, [string]$mods) {
     }
 }
 
+function Get-JarModInfo($zip, [string]$loader = 'forge') {
+    # Mod ids a jar provides (nested jar-in-jar ones too) and the ones it needs on the game side
+    # Multi-loader jars carry both mods.toml and fabric.mod.json; on Forge only mods.toml counts,
+    # the Fabric list (fabric-only libraries) applies only to pure Fabric jars run through Connector
+    $ids = New-Object System.Collections.Generic.List[string]; $deps = New-Object System.Collections.Generic.List[string]
+    $fabricDeps = New-Object System.Collections.Generic.List[string]; $hasToml = $false
+    $nested = New-Object System.Collections.Generic.List[string]   # jar-in-jar libraries: satisfy needs, but are shared, not duplicates
+    foreach ($e in @($zip.Entries)) {
+        $n = $e.FullName
+        # Forge reads only mods.toml; NeoForge prefers neoforge.mods.toml, where a dependency without a type is required
+        $tomlName = 'META-INF/mods.toml'; if ($loader -eq 'neoforge' -and $zip.GetEntry('META-INF/neoforge.mods.toml')) { $tomlName = 'META-INF/neoforge.mods.toml' }
+        if ($n -eq $tomlName) {
+            $hasToml = $true
+            $sr = New-Object IO.StreamReader($e.Open()); $toml = $sr.ReadToEnd(); $sr.Dispose()
+            $sect = ''; $dep = $null
+            foreach ($ln in ($toml -split "`n")) {
+                $l = $ln.Trim()
+                if ($l -match '^\[\[\s*mods\s*\]\]') { $sect = 'mods'; continue }
+                if ($l -match '^\[\[\s*dependencies\.') { if ($dep) { $deps.AddRange([string[]]@(Resolve-TomlDep $dep $tomlName)) }; $sect = 'dep'; $dep = @{}; continue }
+                if ($l -match '^\[') { if ($dep) { $deps.AddRange([string[]]@(Resolve-TomlDep $dep $tomlName)) }; $dep = $null; $sect = ''; continue }
+                if ($sect -eq 'mods' -and $l -match '^modId\s*=\s*"([^"]+)"') { $ids.Add($Matches[1]) }
+                if ($sect -eq 'dep' -and $l -match '^(modId|mandatory|type|side)\s*=\s*"?([^"#\s]+)"?') { $dep[$Matches[1]] = $Matches[2] }
+            }
+            if ($dep) { $deps.AddRange([string[]]@(Resolve-TomlDep $dep $tomlName)) }
+        }
+        elseif ($n -eq 'fabric.mod.json') {
+            $sr = New-Object IO.StreamReader($e.Open()); $fj = $sr.ReadToEnd(); $sr.Dispose()
+            try {
+                $o = $fj | ConvertFrom-Json
+                if ($o.id) { $ids.Add([string]$o.id) }
+                foreach ($pv in @($o.provides)) { if ($pv) { $ids.Add([string]$pv) } }
+                if ($o.depends -and "$($o.environment)" -ne 'server') { foreach ($p in $o.depends.PSObject.Properties) { $fabricDeps.Add($p.Name) } }
+            }
+            catch { }
+        }
+        elseif ($n -match '^META-INF/(jarjar|jars)/[^/]+\.jar$') {
+            $ms = New-Object IO.MemoryStream; $s = $e.Open(); $s.CopyTo($ms); $s.Dispose()
+            try { $inner = New-Object IO.Compression.ZipArchive($ms); $r = Get-JarModInfo $inner $loader; $nested.AddRange([string[]]@($r.ids)); $nested.AddRange([string[]]@($r.nested)); $inner.Dispose() } catch { }
+        }
+    }
+    if (-not $hasToml) { $deps.AddRange($fabricDeps) }
+    return @{ ids = @($ids); deps = @($deps); nested = @($nested) }
+}
+function Resolve-TomlDep($dep, [string]$tomlName) {
+    # Forge writes mandatory=true, NeoForge type="required" (or no type at all); server-only needs don't matter to the game
+    $need = ($dep['mandatory'] -eq 'true') -or ($dep['type'] -eq 'required') -or ($tomlName -like '*neoforge*' -and -not $dep['type'])
+    if ($need -and $dep['modId'] -and "$($dep['side'])" -ne 'SERVER') { return $dep['modId'] }
+    return @()
+}
+
+function Remove-ServerOnlyMods([string]$mods) {
+    # Server packs carry server-only mods (servercore and the like) that have no business in a game; Modrinth knows which they are
+    $jars = @(Get-ChildItem -LiteralPath $mods -Filter '*.jar' -File)
+    if (-not $jars.Count) { return }
+    $byHash = @{}; foreach ($j in $jars) { $byHash[(Get-FileHash -LiteralPath $j.FullName -Algorithm SHA1).Hash.ToLower()] = $j }
+    try { $vers = Invoke-RestMethod -Method Post -Uri 'https://api.modrinth.com/v2/version_files' -ContentType 'application/json' -Body (@{ hashes = @($byHash.Keys); algorithm = 'sha1' } | ConvertTo-Json) -TimeoutSec 60 }
+    catch { return }
+    $projOf = @{}; foreach ($p in $vers.PSObject.Properties) { $projOf[$p.Name] = $p.Value.project_id }
+    $ids = @($projOf.Values | Sort-Object -Unique)
+    $serverOnly = @{}
+    for ($i = 0; $i -lt $ids.Count; $i += 100) {
+        $chunk = $ids[$i..([Math]::Min($i + 99, $ids.Count - 1))]
+        try { $res = Invoke-RestMethod ("https://api.modrinth.com/v2/projects?ids=" + [uri]::EscapeDataString('["' + ($chunk -join '","') + '"]')) } catch { continue }
+        foreach ($pr in $res) { if ($pr.client_side -eq 'unsupported') { $serverOnly[$pr.id] = $pr.title } }
+    }
+    if (-not $serverOnly.Count) { return }
+    $park = Join-Path (Split-Path $mods -Parent) '_server_only_mods'
+    New-Item -ItemType Directory -Force $park | Out-Null
+    foreach ($h in $projOf.Keys) { if ($serverOnly.ContainsKey($projOf[$h])) { Move-Item -LiteralPath $byHash[$h].FullName -Destination $park -Force } }
+    Info "서버 전용 모드 $($serverOnly.Count)개는 게임에 필요 없어서 뺐어요: $(@($serverOnly.Values | Select-Object -First 5) -join ', ')"
+}
+
+function Add-MissingClientDeps([string]$mods, $li) {
+    # A server pack lacks client-only mods, yet some of its mods still require one on the game side
+    # (immersivelanterns -> sodiumdynamiclights). The requiring mod's Modrinth page names its dependencies;
+    # a candidate is kept only if its jar really provides the missing id.
+    $addedVersions = New-Object System.Collections.Generic.List[object]; $provided = @{}; $top = @{}
+    $builtin = @{}; foreach ($b in 'minecraft', 'forge', 'neoforge', 'java', 'fabricloader', 'fabric', 'fabric-api', 'fabric-api-base', 'connectormod', 'mixinextras', 'fml', 'javafml') { $builtin[$b] = $true }
+    for ($round = 1; $round -le 5; $round++) {
+        $provided = @{}; $top = @{}; $needs = @{}
+        foreach ($jar in @(Get-ChildItem -LiteralPath $mods -Filter '*.jar' -File)) {
+            $z = $null
+            try {
+                $z = [IO.Compression.ZipFile]::OpenRead($jar.FullName)
+                $r = Get-JarModInfo $z $li.loader
+                foreach ($i in $r.ids) { $provided[$i] = $true; $top[$i] = $true }
+                foreach ($i in $r.nested) { $provided[$i] = $true }
+                foreach ($d in $r.deps) { if (-not $needs.ContainsKey($d)) { $needs[$d] = New-Object System.Collections.Generic.List[string] }; $needs[$d].Add($jar.FullName) }
+            }
+            catch { }
+            finally { if ($z) { $z.Dispose() } }
+        }
+        $missing = @($needs.Keys | Where-Object { -not $provided.ContainsKey($_) -and -not $builtin.ContainsKey($_) -and $_ -notlike 'fabric-*' })
+        if (-not $missing.Count) { break }
+        # Something set aside as server-only turns out to be needed after all: put it back rather than download another copy
+        $park = Join-Path (Split-Path $mods -Parent) '_server_only_mods'
+        $back = 0
+        foreach ($pj in @(Get-ChildItem -LiteralPath $park -Filter '*.jar' -File -ErrorAction SilentlyContinue)) {
+            $z = $null; $gives = @()
+            try { $z = [IO.Compression.ZipFile]::OpenRead($pj.FullName); $gives = @((Get-JarModInfo $z $li.loader).ids) } catch { } finally { if ($z) { $z.Dispose() } }
+            if (@($missing | Where-Object { $_ -in $gives }).Count) { Move-Item -LiteralPath $pj.FullName -Destination $mods -Force; $back++ }
+        }
+        if ($back) { Info "다른 모드가 꼭 필요로 해서 $($back)개는 다시 넣었어요."; continue }
+        Step "빠진 필수 모드 찾는 중: $($missing -join ', ')"
+        $askers = @($missing | ForEach-Object { $needs[$_] } | Sort-Object -Unique)
+        $hashes = @($askers | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA1).Hash.ToLower() })
+        $found = 0
+        try { $vers = Invoke-RestMethod -Method Post -Uri 'https://api.modrinth.com/v2/version_files' -ContentType 'application/json' -Body (@{ hashes = $hashes; algorithm = 'sha1' } | ConvertTo-Json) }
+        catch { Info '(Modrinth에 물어보지 못했어요)'; return }
+        $projects = @(foreach ($p in $vers.PSObject.Properties) { foreach ($d in @($p.Value.dependencies)) { if ($d.dependency_type -eq 'required' -and $d.project_id) { $d.project_id } } }) | Sort-Object -Unique
+        $loaders = @($li.loader); if ($provided.ContainsKey('connectormod')) { $loaders += 'fabric' }
+        foreach ($proj in $projects) {
+            if (-not @($missing | Where-Object { -not $provided.ContainsKey($_) }).Count) { break }
+            $q = '?loaders=' + [uri]::EscapeDataString((ConvertTo-Json -InputObject @($loaders) -Compress)) + '&game_versions=' + [uri]::EscapeDataString("[`"$($li.mc)`"]")
+            try { $v = @(Invoke-RestMethod "https://api.modrinth.com/v2/project/$proj/version$q" | ForEach-Object { $_ }) | Select-Object -First 1 } catch { continue }
+            if (-not $v) { continue }
+            $f = $v.files | Where-Object primary | Select-Object -First 1; if (-not $f) { $f = $v.files[0] }
+            if ($f.filename -notmatch '^[A-Za-z0-9 ._+()\[\]-]+\.jar$' -or (Test-Path -LiteralPath (Join-Path $mods $f.filename))) { continue }
+            $tmpJar = Join-Path $mods "$($f.filename).check"
+            try { Get-Download $f.url $tmpJar -Sha1 $f.hashes.sha1 } catch { continue }
+            $z = $null; $gives = @()
+            try { $z = [IO.Compression.ZipFile]::OpenRead($tmpJar); $gives = @((Get-JarModInfo $z $li.loader).ids) } catch { } finally { if ($z) { $z.Dispose() } }
+            $hit = @($missing | Where-Object { $_ -in $gives })
+            if ($hit.Count) {
+                Move-Item -LiteralPath $tmpJar -Destination (Join-Path $mods $f.filename) -Force
+                foreach ($g in $gives) { $provided[$g] = $true; $top[$g] = $true }
+                Info "빠져 있던 필수 모드를 넣었어요: $($f.filename) ($($hit -join ', '))"
+                $addedVersions.Add($v); $found++
+            }
+            else { Remove-Item -LiteralPath $tmpJar -Force -ErrorAction SilentlyContinue }
+        }
+        if (-not $found) {
+            Info "필수 모드를 찾지 못했어요: $($missing -join ', ') (게임이 안 켜지면 이 이름을 도와줄 사람에게 알려 주세요)"
+            break
+        }
+    }
+    # What was added may itself need mods no mods.toml names (sodium-options-api -> embeddium): follow Modrinth's
+    # own "required" list. A candidate whose mod id is already here is dropped, so nothing gets loaded twice.
+    $queue = New-Object System.Collections.Generic.Queue[string]; $seen = @{}
+    foreach ($av in $addedVersions) { foreach ($d in @($av.dependencies)) { if ($d.dependency_type -eq 'required' -and $d.project_id) { $queue.Enqueue($d.project_id) } } }
+    $loaders = @($li.loader); if ($provided.ContainsKey('connectormod')) { $loaders += 'fabric' }
+    $q = '?loaders=' + [uri]::EscapeDataString((ConvertTo-Json -InputObject @($loaders) -Compress)) + '&game_versions=' + [uri]::EscapeDataString("[`"$($li.mc)`"]")
+    while ($queue.Count -and $seen.Count -lt 20) {
+        $proj = $queue.Dequeue(); if ($seen.ContainsKey($proj)) { continue }; $seen[$proj] = $true
+        try { $v = @(Invoke-RestMethod "https://api.modrinth.com/v2/project/$proj/version$q" | ForEach-Object { $_ }) | Select-Object -First 1 } catch { continue }
+        if (-not $v) { continue }
+        $f = $v.files | Where-Object primary | Select-Object -First 1; if (-not $f) { $f = $v.files[0] }
+        if ($f.filename -notmatch '^[A-Za-z0-9 ._+()\[\]-]+\.jar$' -or (Test-Path -LiteralPath (Join-Path $mods $f.filename))) { continue }
+        $tmpJar = Join-Path $mods "$($f.filename).check"
+        try { Get-Download $f.url $tmpJar -Sha1 $f.hashes.sha1 } catch { continue }
+        $z = $null; $gives = @()
+        try { $z = [IO.Compression.ZipFile]::OpenRead($tmpJar); $gives = @((Get-JarModInfo $z $li.loader).ids) } catch { } finally { if ($z) { $z.Dispose() } }
+        if (-not $gives.Count -or @($gives | Where-Object { $top.ContainsKey($_) }).Count) { Remove-Item -LiteralPath $tmpJar -Force -ErrorAction SilentlyContinue; continue }
+        Move-Item -LiteralPath $tmpJar -Destination (Join-Path $mods $f.filename) -Force
+        foreach ($g in $gives) { $provided[$g] = $true; $top[$g] = $true }
+        Info "같이 필요한 모드도 넣었어요: $($f.filename)"
+        foreach ($d in @($v.dependencies)) { if ($d.dependency_type -eq 'required' -and $d.project_id) { $queue.Enqueue($d.project_id) } }
+    }
+}
+
 function Install-Client($pack) {
     if ($Name -notmatch '^[A-Za-z0-9]([A-Za-z0-9 ._-]{0,58}[A-Za-z0-9_-])?$') { throw "이름으로 쓸 수 없어요: '$Name'" }
     if ($Address -notmatch '^[A-Za-z0-9.-]+(:\d{1,5})?$') { throw "서버 주소가 이상해요: '$Address'" }
@@ -626,6 +786,8 @@ function Install-Client($pack) {
         $sigSrc = "$($pack.id)|$verLabel|" + ((@($jars) | Sort-Object) -join ',')
     }
     else { $verLabel = $VersionKey; $sigSrc = "$($pack.id)|$VersionKey|$AddedMods" }
+    # Bumped whenever the way the game folder is built changes, so existing game folders get rebuilt once
+    $sigSrc = "build2|$sigSrc"
     $sha = [Security.Cryptography.SHA256]::Create()
     $sig = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($sigSrc)) | ForEach-Object { $_.ToString('x2') })
 
@@ -646,6 +808,10 @@ function Install-Client($pack) {
         else { $ver = Get-ModrinthVersion $pack $VersionKey; $verLabel = $ver.version_number; $li = Get-ModrinthClient $ver $script:tmp }
         if ($li.version -notmatch '^[A-Za-z0-9._+-]+$' -or "$($li.mc)" -notmatch '^[0-9][0-9.]*$') { throw "모드팩 안의 버전 정보가 이상해요 (마인크래프트 '$($li.mc)', 로더 '$($li.version)')." }
         Get-AddedClientMods $AddedMods (Join-Path $script:tmp 'mods')
+        New-Item -ItemType Directory -Force (Join-Path $script:tmp 'mods') | Out-Null
+        Step '게임에 맞게 모드 정리하는 중'
+        Remove-ServerOnlyMods (Join-Path $script:tmp 'mods')
+        Add-MissingClientDeps (Join-Path $script:tmp 'mods') $li
 
         Step '게임 폴더에 넣는 중'
         # mods is replaced as a whole (old versions must go); configs are laid over; worlds, screenshots and settings stay

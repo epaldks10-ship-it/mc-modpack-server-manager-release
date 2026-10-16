@@ -519,7 +519,8 @@ function Show-SrvInfo {
 
 function Get-ServerRam($d) {
     $jvm = Join-Path $d 'user_jvm_args.txt'
-    if (Test-Path -LiteralPath $jvm) { $m = [regex]::Match((Get-Content -LiteralPath $jvm -Raw), '-Xmx(\d+)[Gg]'); if ($m.Success) { return [int]$m.Groups[1].Value } }
+    # Only a real setting line counts: the pack's own comments mention "-Xmx3G" as an example
+    if (Test-Path -LiteralPath $jvm) { $m = [regex]::Match((Get-Content -LiteralPath $jvm -Raw), '(?m)^\s*-Xmx(\d+)[Gg]'); if ($m.Success) { return [int]$m.Groups[1].Value } }
     return 4
 }
 function Set-ServerRam($d, [int]$gb) {
@@ -1620,6 +1621,15 @@ function Get-GameRam([int]$serverRam = 0) {
     # What is left after Windows (about 3GB) and a server running on the same PC, between 3 and 8GB
     return [int][Math]::Max(3, [Math]::Min(8, $totalRam - $serverRam - 3))
 }
+function Stop-GameIfRunning([string]$gd) {
+    # A game left open (or frozen on an error screen) would hold its files; offer to close it
+    $procs = @(Get-CimInstance Win32_Process -Filter "Name='javaw.exe' OR Name='java.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($gd) })
+    if (-not $procs.Count) { return $true }
+    if (-not (Ask-YesNo "이 서버용 마인크래프트가 아직 켜져 있어요. (멈춘 상태일 수도 있어요)`n`n게임을 닫고 다시 준비할까요?")) { return $false }
+    foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+    Pump 2000
+    return $true
+}
 
 function Start-HostGame {
     $d = Get-SelDir; if (-not $d) { Show-Msg '왼쪽 목록에서 서버를 고르세요.'; return }
@@ -1628,7 +1638,7 @@ function Start-HostGame {
     if (-not (Test-McLauncher)) { return }
     $name = $lstSrv.SelectedItem
     $gd = Join-Path $GameRoot $name
-    if (Test-GameRunning $gd) { Show-Msg '이 서버용 마인크래프트가 이미 켜져 있어요.'; return }
+    if (-not (Stop-GameIfRunning $gd)) { return }
     # The host needs to be on the whitelist too; ask once here instead of letting the first join bounce
     $wl = Read-Json (Join-Path $d 'whitelist.json')
     if (-not @($wl).Count -and -not (Test-Path -LiteralPath (Join-Path $d 'whitelist-pending.txt'))) {
@@ -1638,6 +1648,13 @@ function Start-HostGame {
     }
     if (-not (Close-McLauncher)) { return }
     $sr = 0; if ($totalRam -lt 24) { $sr = Get-ServerRam $d }
+    # Server and game share this PC's memory; a modpack game wants about 6GB, Windows about 3GB
+    if ($sr -and ($totalRam - $sr - 3) -lt 6 -and $sr -gt 4) {
+        if (Ask-YesNo "이 컴퓨터의 램은 약 $($totalRam)GB예요. 서버($($sr)GB)와 게임을 같이 켜면 램이 모자라서 게임이 멈출 수 있어요.`n`n서버 램을 4GB로 줄이고 게임에 더 줄까요? (권장, 서버를 다음에 켤 때부터 적용돼요)") {
+            Set-ServerRam $d 4; $sr = 4; Show-SrvInfo
+            if ($script:srv) { Show-Msg "서버 램을 4GB로 바꿨어요. 지금 켜진 서버에는 [■ 서버 끄기] → 다시 켜기를 해야 적용돼요." }
+        }
+    }
     $script:gameJob = @{ gameDir = $gd }
     Start-InstallJob "-Client -PackId $($i.pack) -VersionKey `"$($i.version)`" -Name `"$name`" -FromServer `"$d`" -GameDir `"$gd`" -Address localhost -GameRamGB $(Get-GameRam $sr)" 'game'
 }
@@ -1745,7 +1762,7 @@ function Start-JoinGame($c, [string]$addr, [int]$ram, $modsB64 = $null) {   # un
     if (-not $addr) { Show-Msg "서버 주소를 넣어 주세요.`n방장에게 '어쩌구.joinmc.link' 같은 주소를 물어봐서 [서버 주소] 칸에 넣으면 돼요."; return }
     if (-not (Test-McLauncher)) { return }
     $gd = Join-Path $GameRoot "join-$($c.n)"
-    if (Test-GameRunning $gd) { Show-Msg '이 서버용 마인크래프트가 이미 켜져 있어요.'; return }
+    if (-not (Stop-GameIfRunning $gd)) { return }
     if (-not (Close-McLauncher)) { return }
     $mods = $modsB64; if ($null -eq $mods) { $mods = ConvertTo-ModsB64 $c.m }
     $script:gameJob = @{ gameDir = $gd }
