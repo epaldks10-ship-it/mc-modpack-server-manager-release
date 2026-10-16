@@ -1,0 +1,116 @@
+{
+  "_comment": "CurseForge packs: add new server pack links at the top of 'versions'. URL = https://mediafilez.forgecdn.net/files/<fileId / 1000>/<fileId % 1000>/<file name>. Modrinth packs list their versions live, only the slug is needed.",
+  "packs": [
+    {
+      "id": "medieval-mc",
+      "name": "Medieval MC [FORGE] MMC4",
+      "source": "curseforge",
+      "page": "https://www.curseforge.com/minecraft/modpacks/medieval-mc-mmc4",
+      "desc": "중세 판타지 RPG. 보스, 드래곤, 마법, 마을 건설, 퀘스트. 모드 400개 정도.",
+      "mc": "1.20.1",
+      "loader": "forge",
+      "ramGB": 8,
+      "clientHow": "CurseForge 앱에서 'Medieval MC [FORGE] MMC4' 검색 후 같은 버전 설치",
+      "versions": [
+        { "label": "v39", "date": "2026-02-26", "url": "https://mediafilez.forgecdn.net/files/7683/69/SERVER_ONLY_MMC4_v39.zip", "size": 1437317917 },
+        { "label": "v38", "date": "2025-12-04", "url": "https://mediafilez.forgecdn.net/files/7292/411/SERVER_ONLY_MMC4_v38.zip", "size": 1408573299 },
+        { "label": "v37 HF", "date": "2025-11-15", "url": "https://mediafilez.forgecdn.net/files/7225/468/SERVER_ONLY_MMC4_v37HF.zip", "size": 1403529876 },
+        { "label": "v37", "date": "2025-11-14", "url": "https://mediafilez.forgecdn.net/files/7221/301/SERVER_ONLY_MMC4_v37.zip", "size": 1404770446 }
+      ]
+    },
+    {
+      "id": "atm9",
+      "name": "All the Mods 9 (ATM9)",
+      "source": "curseforge",
+      "page": "https://www.curseforge.com/minecraft/modpacks/all-the-mods-9",
+      "desc": "기술, 마법, 탐험이 다 들어간 대형 팩. 모드 400개 이상. 램을 많이 써요.",
+      "mc": "1.20.1",
+      "loader": "forge",
+      "ramGB": 10,
+      "clientHow": "CurseForge 앱에서 'All the Mods 9' 검색 후 같은 버전 설치",
+      "versions": [
+        { "label": "1.1.1", "date": "2025-10-12", "url": "https://mediafilez.forgecdn.net/files/7097/957/Server-Files-1.1.1.zip", "size": 1138394395 },
+        { "label": "1.0.8", "date": "2025-04-22", "url": "https://mediafilez.forgecdn.net/files/6451/435/Server-Files-1.0.8.zip", "size": 1045101364 },
+        { "label": "1.0.7", "date": "2025-03-19", "url": "https://mediafilez.forgecdn.net/files/6322/79/Server-Files-1.0.7.zip", "size": 1038148178 },
+        { "label": "1.0.6", "date": "2025-03-18", "url": "https://mediafilez.forgecdn.net/files/6319/12/Server-Files-1.0.6.zip", "size": 1038619900 }
+      ]
+    },
+    {
+      "id": "atm10",
+      "name": "All the Mods 10 (ATM10)",
+      "source": "curseforge",
+      "page": "https://www.curseforge.com/minecraft/modpacks/all-the-mods-10",
+      "desc": "ATM9의 다음 버전(1.21.1). 기술, 마법, 탐험 대형 팩. 램을 많이 써요.",
+      "mc": "1.21.1",
+      "loader": "neoforge",
+      "ramGB": 10,
+      "clientHow": "CurseForge 앱에서 'All the Mods 10' 검색 후 같은 버전 설치",
+      "versions": [
+        { "label": "8.2", "date": "2026-09-22", "url": "https://mediafilez.forgecdn.net/files/8945/94/ServerFiles-8.2.zip", "size": 1218983508 },
+        { "label": "8.1", "date": "2026-08-29", "url": "https://mediafilez.forgecdn.net/files/8764/245/ServerFiles-8.1.zip", "size": 1205156753 },
+        { "label": "8.0", "date": "2026-08-14", "url": "https://mediafilez.forgecdn.net/files/8649/107/ServerFiles-8.0.zip", "size": 1198404969 },
+        { "label": "7.3", "date": "2026-08-02", "url": "https://mediafilez.forgecdn.net/files/8558/557/ServerFiles-7.3.zip", "size": 1181515906 }
+      ]
+    },
+    {
+      "id": "bmc4",
+      "name": "Better MC [FORGE] BMC4",
+      "source": "modrinth",
+      "slug": "better-mc-forge-bmc4",
+      "page": "https://modrinth.com/modpack/better-mc-forge-bmc4",
+      "desc": "바닐라 느낌 그대로 바이옴, 구조물, 몹, 던전을 크게 늘린 팩. 처음 하는 사람에게 추천.",
+      "ramGB": 6,
+      "clientHow": "Modrinth 앱 또는 CurseForge 앱에서 'Better MC [FORGE] BMC4' 검색 후 같은 버전 설치"
+    },
+    {
+      "id": "cobblemon",
+      "name": "Cobblemon Official Modpack [Fabric]",
+      "source": "modrinth",
+      "slug": "cobblemon-fabric",
+      "page": "https://modrinth.com/modpack/cobblemon-fabric",
+      "desc": "포켓몬을 잡고 키우고 배틀하는 공식 Cobblemon 팩. 가벼워요.",
+      "ramGB": 4,
+      "clientHow": "Modrinth 앱에서 'Cobblemon Official Modpack' 검색 후 같은 버전 설치"
+    },
+    {
+      "id": "cobbleverse",
+      "name": "COBBLEVERSE - Pokemon Adventure",
+      "source": "modrinth",
+      "slug": "cobbleverse",
+      "page": "https://modrinth.com/modpack/cobbleverse",
+      "desc": "Cobblemon에 체육관, 지역, 모험 요소를 더한 포켓몬 모험 팩.",
+      "ramGB": 6,
+      "clientHow": "Modrinth 앱에서 'COBBLEVERSE' 검색 후 같은 버전 설치"
+    },
+    {
+      "id": "prominence2",
+      "name": "Prominence II: Hasturian Era",
+      "source": "modrinth",
+      "slug": "prominence-2-fabric",
+      "page": "https://modrinth.com/modpack/prominence-2-fabric",
+      "desc": "스토리와 퀘스트가 있는 판타지 RPG 팩. 보스와 장비 성장이 핵심.",
+      "ramGB": 8,
+      "clientHow": "Modrinth 앱에서 'Prominence II' 검색 후 같은 버전 설치"
+    },
+    {
+      "id": "zombie100",
+      "name": "Zombie Invade 100 Days",
+      "source": "modrinth",
+      "slug": "zombie-invade-100-days",
+      "page": "https://modrinth.com/modpack/zombie-invade-100-days",
+      "desc": "좀비 아포칼립스에서 100일 버티기. 총기와 생존 요소.",
+      "ramGB": 6,
+      "clientHow": "Modrinth 앱에서 'Zombie Invade 100 Days' 검색 후 같은 버전 설치"
+    },
+    {
+      "id": "createplus",
+      "name": "Create+",
+      "source": "modrinth",
+      "slug": "create_plus",
+      "page": "https://modrinth.com/modpack/create_plus",
+      "desc": "Create 모드 중심 팩. 기계, 공장, 기차를 만드는 걸 좋아하면 추천.",
+      "ramGB": 6,
+      "clientHow": "Modrinth 앱에서 'Create+' 검색 후 같은 버전 설치"
+    }
+  ]
+}

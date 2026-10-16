@@ -1,0 +1,31 @@
+{
+    "version":  "1.0.0",
+    "date":  "2026-10-16",
+    "notes":  "첫 배포 버전이에요.",
+    "files":  [
+                  {
+                      "path":  "manager.ps1",
+                      "sha256":  "ae59daedd060c4cc9eb233de7cbdfe5b1bb2e6b3d8f9711438829a3e63506402"
+                  },
+                  {
+                      "path":  "install.ps1",
+                      "sha256":  "cfe559e1fa5bbed36ff174ec9889552c12b56400553f3cebb4a86040fbf3812b"
+                  },
+                  {
+                      "path":  "packs.json",
+                      "sha256":  "385a41c85bbf7b2d1ef7f08dae14a4d404b13d78ddb2e32a11abaf5b2cf782e5"
+                  },
+                  {
+                      "path":  "client-only-mods.txt",
+                      "sha256":  "d476de16a2120daf76acd516fd103bd62719cb8efc2d7404d7ffb793092f1551"
+                  },
+                  {
+                      "path":  "manual.html",
+                      "sha256":  "86551b59690a1623cf2f5c4b07749225585efd72b951d238de8129d1fc051231"
+                  },
+                  {
+                      "path":  "version.txt",
+                      "sha256":  "92521fc3cbd964bdc9f584a991b89fddaa5754ed1cc96d6d42445338669c1305"
+                  }
+              ]
+}
