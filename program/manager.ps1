@@ -178,7 +178,20 @@ if ($updated) {
     exit 0
 }
 
-$packs = @((Get-Content (Join-Path $Prog 'packs.json') -Raw -Encoding UTF8 | ConvertFrom-Json).packs)
+# packs.json comes with the program (and its updates); custom-packs.json holds the ones the user added and is never replaced
+$CustomPacksFile = Join-Path $Prog 'custom-packs.json'
+function Read-AllPacks {
+    $all = @((Get-Content (Join-Path $Prog 'packs.json') -Raw -Encoding UTF8 | ConvertFrom-Json).packs | ForEach-Object { $_ })
+    if (Test-Path -LiteralPath $CustomPacksFile) {
+        try {
+            $ids = @($all | ForEach-Object { $_.id })
+            $all += @((Get-Content -LiteralPath $CustomPacksFile -Raw -Encoding UTF8 | ConvertFrom-Json).packs | ForEach-Object { $_ } | Where-Object { $_.id -and $_.id -notin $ids })
+        }
+        catch { }
+    }
+    return , $all
+}
+$packs = Read-AllPacks
 $totalRam = [int][math]::Floor((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
 $font = New-Object Drawing.Font('Malgun Gothic', 10)
 $bold = New-Object Drawing.Font('Malgun Gothic', 13, [Drawing.FontStyle]::Bold)
@@ -226,8 +239,18 @@ $form.Controls.Add($tabs)
 # Tab: new server
 # =====================================================================================
 $lblPick = New-Ctl Label 10 10 260 22 '① 모드팩을 고르세요'
-$lstPacks = New-Ctl ListBox 10 35 290 540
-foreach ($p in $packs) { [void]$lstPacks.Items.Add($p.name) }
+$lstPacks = New-Ctl ListBox 10 35 290 492
+$btnAddPack = New-Ctl Button 10 532 150 40 '+ 모드팩 추가'; $btnAddPack.Font = $bold
+$btnDelPack = New-Ctl Button 165 532 135 40 '목록에서 빼기'; $btnDelPack.Enabled = $false
+function Update-PackList([string]$selectId = '') {
+    $script:packs = Read-AllPacks
+    $script:packListBusy = $true
+    $lstPacks.Items.Clear()
+    foreach ($p in $script:packs) { $n = $p.name; if ($p.custom) { $n = "★ $n" }; [void]$lstPacks.Items.Add($n) }
+    $script:packListBusy = $false; $btnDelPack.Enabled = $false
+    if ($selectId) { $k = [array]::IndexOf(@($script:packs | ForEach-Object { $_.id }), $selectId); if ($k -ge 0) { $lstPacks.SelectedIndex = $k } }
+}
+foreach ($p in $packs) { $n = $p.name; if ($p.custom) { $n = "★ $n" }; [void]$lstPacks.Items.Add($n) }
 
 $lblName = New-Ctl Label 320 35 630 28; $lblName.Font = $bold
 $lblDesc = New-Ctl Label 320 68 630 48
@@ -255,7 +278,7 @@ $txtInstallLog = New-Ctl TextBox 320 497 630 118
 $txtInstallLog.Multiline = $true; $txtInstallLog.ReadOnly = $true; $txtInstallLog.ScrollBars = 'Vertical'; $txtInstallLog.Font = $mono
 $txtInstallLog.BackColor = [Drawing.Color]::White
 
-$tabNew.Controls.AddRange(@($lblPick, $lstPacks, $lblName, $lblDesc, $lblInfo, $lnkPage, $lblVer, $cmbVer, $lblSrv, $txtName,
+$tabNew.Controls.AddRange(@($lblPick, $lstPacks, $btnAddPack, $btnDelPack, $lblName, $lblDesc, $lblInfo, $lnkPage, $lblVer, $cmbVer, $lblSrv, $txtName,
         $lblRam, $numRam, $lblRamHint, $chkEula, $lnkEula, $btnInstall, $lblWork, $txtInstallLog))
 
 $script:versions = @()
@@ -290,8 +313,129 @@ function Get-Versions($p) {
         })
 }
 
+# ---------------- modpacks the user adds (Modrinth by address, CurseForge by project ID) ----------------
+function Get-CfJson([string]$url) {
+    # curl's raw bytes, read back as UTF-8 (PowerShell 5.1 would decode native output with the console code page)
+    $tmp = Join-Path $env:TEMP "mcsm-cf-$([guid]::NewGuid().ToString('N')).json"
+    try {
+        & curl.exe -s -L --max-time 30 -o $tmp $url
+        if (-not (Test-Path -LiteralPath $tmp)) { throw 'CurseForge에 연결하지 못했어요. 인터넷을 확인해 주세요.' }
+        $raw = [IO.File]::ReadAllText($tmp, [Text.Encoding]::UTF8)
+        try { return $raw | ConvertFrom-Json } catch { throw 'CurseForge가 응답하지 않아요. 잠시 뒤에 다시 해 주세요.' }
+    }
+    finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+}
+function ConvertTo-PackRecord($p) {
+    # Fresh objects only: Windows PowerShell 5.1 mangles arrays that came out of ConvertFrom-Json when they are written back
+    $o = [ordered]@{}
+    foreach ($k in 'id', 'name', 'source', 'slug', 'page', 'desc', 'mc', 'loader', 'ramGB', 'clientHow', 'cfId', 'refreshed') { if ($null -ne $p.$k -and "$($p.$k)" -ne '') { $o[$k] = $p.$k } }
+    $o['custom'] = $true
+    if ($p.source -eq 'curseforge') { $o['versions'] = @(foreach ($v in @($p.versions)) { [ordered]@{ label = [string]$v.label; date = [string]$v.date; url = [string]$v.url; size = [long]$v.size } }) }
+    return $o
+}
+function Save-CustomPacks($list) {
+    $recs = @(foreach ($p in @($list)) { ConvertTo-PackRecord $p })
+    [IO.File]::WriteAllText($CustomPacksFile, ([ordered]@{ packs = $recs } | ConvertTo-Json -Depth 6), $Utf8)
+}
+function Get-CustomPacks { return @($packs | Where-Object { $_.custom }) }
+function Add-CustomPack($p, [switch]$NoSelect) {
+    # A CurseForge pack already in the list keeps its versions and gains the new ones
+    $list = @(Get-CustomPacks | Where-Object { $_.id -ne $p.id })
+    $old = Get-CustomPacks | Where-Object { $_.id -eq $p.id } | Select-Object -First 1
+    if ($old -and $p.source -eq 'curseforge') {
+        $have = @($p.versions | ForEach-Object { $_.label })
+        $p.versions = @(@($p.versions) + @($old.versions | Where-Object { $_.label -notin $have }))
+    }
+    Save-CustomPacks (@($list) + $p)
+    if ($NoSelect) { Update-PackList } else { Update-PackList $p.id }
+}
+function Test-ServerPackUrl([string]$u) { return $u -match '^https://(mediafilez|edge)\.forgecdn\.net/files/\d+/\d+/[^/?#]+$' }
+
+function New-CfPack([int]$projId, [int]$maxVersions = 8) {
+    $list = Get-CfJson "https://www.curseforge.com/api/v1/mods/$projId/files?pageIndex=0&pageSize=50&sort=dateCreated&sortDescending=true&removeAlphas=false"
+    if (-not $list.data) { throw "CurseForge에서 $projId 번 모드팩을 찾지 못했어요. 숫자를 다시 확인해 주세요." }
+    $mains = @($list.data | Where-Object { $_.hasServerPack -or $_.additionalServerPackFilesCount -gt 0 } | Select-Object -First $maxVersions)
+    if (-not $mains.Count) { throw '이 모드팩은 CurseForge에 서버팩을 올려 두지 않았어요. 서버팩이 있는 모드팩만 넣을 수 있어요.' }
+    # The pack's name is what every file's display name starts with ("All the Mods 9-1.1.1" -> "All the Mods 9")
+    $names = @($mains | ForEach-Object { [string]$_.displayName })
+    # Only a trailing version is cut: '-1.1.1', ' v39' (the 9 in 'All the Mods 9' is part of the name)
+    $cut = @($names | ForEach-Object { ($_ -replace '[\s_-]+(v\d+[\w.+-]*|v?\d+(\.\d+)+[\w.+-]*)$', '').Trim(' ', '-', '_') })
+    $name = ($cut | Group-Object | Sort-Object Count -Descending | Select-Object -First 1).Name
+    if (-not $name) { $name = "CurseForge $projId" }
+    $vers = @(foreach ($m in $mains) {
+            $add = Get-CfJson "https://www.curseforge.com/api/v1/mods/$projId/files/$($m.id)/additional-files"
+            $sf = @($add.data | Where-Object { $_.fileName -match '(?i)server' -and $_.fileName -match '\.zip$' }) + @($add.data | Where-Object { $_.fileName -match '\.zip$' }) | Select-Object -First 1
+            if (-not $sf) { continue }
+            $label = ([string]$m.displayName); if ($label.StartsWith($name)) { $label = $label.Substring($name.Length).Trim(' ', '-', '_') }; if (-not $label) { $label = [string]$m.displayName }
+            [pscustomobject]@{ label = $label; date = ([string]$m.dateCreated).Substring(0, 10); url = "https://mediafilez.forgecdn.net/files/$([int][math]::Floor($sf.id / 1000))/$($sf.id % 1000)/$([uri]::EscapeDataString($sf.fileName))"; size = [long]$sf.fileLength
+                mc = @($m.gameVersions | Where-Object { $_ -match '^\d+\.\d+' })[0]; loader = (@($m.gameVersions | Where-Object { $_ -match '^(Forge|NeoForge|Fabric)$' })[0]) }
+        })
+    if (-not $vers.Count) { throw '서버팩 파일을 찾지 못했어요.' }
+    $top = $vers[0]
+    if (-not $top.loader) { throw '이 모드팩의 로더는 지원하지 않아요 (Forge/NeoForge/Fabric만 가능).' }
+    # One Minecraft version per list entry, as with the built-in packs
+    $vers = @($vers | Where-Object { $_.mc -eq $top.mc })
+    return [pscustomobject]@{
+        id = "cf-$projId"; name = $name; source = 'curseforge'; cfId = $projId; page = "https://www.curseforge.com/projects/$projId"
+        desc = "직접 추가한 CurseForge 모드팩이에요. (서버팩이 있는 버전 $($vers.Count)개)"; mc = $top.mc; loader = ([string]$top.loader).ToLower(); ramGB = 6
+        clientHow = "CurseForge 앱에서 '$name' 검색 후 같은 버전 설치"; custom = $true; refreshed = (Get-Date -Format 'yyyy-MM-dd')
+        versions = @($vers | ForEach-Object { [pscustomobject]@{ label = $_.label; date = $_.date; url = $_.url; size = $_.size } })
+    }
+}
+function New-MrPack([string]$text) {
+    $slug = $text
+    if ($text -match 'modrinth\.com/(mod|plugin|resourcepack|shader|datapack)/') { throw '이건 모드팩이 아니라 모드(또는 리소스팩)예요. 모드는 [내 서버] → [모드 추가 / 관리]에서 넣어요.' }
+    if ($text -match 'modrinth\.com/(modpack|project)/([A-Za-z0-9_-]+)') { $slug = $Matches[2] }
+    elseif ($text -notmatch '^[A-Za-z0-9_-]{2,64}$') { throw '주소를 알아보지 못했어요. Modrinth 모드팩 페이지의 주소를 그대로 붙여 넣어 주세요.' }
+    try { $pr = Invoke-RestMethod "https://api.modrinth.com/v2/project/$slug" -TimeoutSec 20 } catch { throw "Modrinth에서 '$slug' 모드팩을 찾지 못했어요." }
+    if ($pr.project_type -ne 'modpack') { throw "'$($pr.title)'은(는) 모드팩이 아니라 모드예요. 모드는 [내 서버] → [모드 추가 / 관리]에서 넣어요." }
+    if (-not (@($pr.loaders) | Where-Object { $_ -in 'forge', 'neoforge', 'fabric' })) { throw '이 모드팩의 로더는 지원하지 않아요 (Forge/NeoForge/Fabric만 가능).' }
+    $desc = [string]$pr.description; if ($desc.Length -gt 140) { $desc = $desc.Substring(0, 140) + '...' }
+    return [pscustomobject]@{
+        id = "mr-$($pr.slug)"; name = [string]$pr.title; source = 'modrinth'; slug = [string]$pr.slug; page = "https://modrinth.com/modpack/$($pr.slug)"
+        desc = "$desc (직접 추가한 모드팩)"; ramGB = 6; clientHow = "Modrinth 앱에서 '$($pr.title)' 검색 후 같은 버전 설치"; custom = $true
+    }
+}
+function Show-AddPack {
+    $text = ("" + (Ask-Text "넣을 모드팩을 알려 주세요.`n`n· Modrinth: 모드팩 페이지 주소를 붙여 넣기`n   (예: https://modrinth.com/modpack/better-mc-forge-bmc4)`n`n· CurseForge: 모드팩 페이지 오른쪽 'About Project' 칸의 Project ID 숫자`n   (예: 715572)")).Trim()
+    if (-not $text) { return }
+    $form.Cursor = 'WaitCursor'; $lblWork.ForeColor = [Drawing.Color]::DarkGreen; $lblWork.Text = '모드팩 정보를 확인하는 중...'; $form.Refresh()
+    try {
+        if ($text -match '^\d{3,9}$') { $p = New-CfPack ([int]$text) }
+        elseif ($text -match 'curseforge\.com') { throw "CurseForge는 주소 대신 Project ID 숫자를 넣어 주세요.`n모드팩 페이지 오른쪽 'About Project' 칸에 있어요." }
+        else { $p = New-MrPack $text }
+        # Already built in? Same Modrinth project, same CurseForge project, or a name that starts the same way
+        $norm = { param($s) ([string]$s).ToLower() -replace '[^a-z0-9]', '' }
+        $nn = & $norm $p.name
+        $dup = $packs | Where-Object { -not $_.custom -and (($p.slug -and $_.slug -eq $p.slug) -or ($p.cfId -and "$($_.cfId)" -eq "$($p.cfId)") -or ($nn.Length -ge 6 -and (& $norm $_.name).StartsWith($nn))) } | Select-Object -First 1
+        if ($dup) { $form.Cursor = 'Default'; $lblWork.Text = ''; Show-Msg "'$($dup.name)'은(는) 이미 목록에 있어요. 그걸 고르면 돼요."; Update-PackList $dup.id; return }
+        if (@($packs | Where-Object { $_.id -eq $p.id -and -not $_.custom }).Count) { $form.Cursor = 'Default'; $lblWork.Text = ''; Show-Msg "'$($p.name)'은(는) 이미 목록에 있어요."; Update-PackList $p.id; return }
+        Add-CustomPack $p
+        $lblWork.Text = ''
+        Show-Msg "'$($p.name)' 모드팩을 목록에 넣었어요. (★ 표시)`n이제 버전을 고르고 [서버 만들기]를 누르면 돼요."
+    }
+    catch { $lblWork.Text = ''; Show-Msg "모드팩을 넣지 못했어요.`n$($_.Exception.Message)" 'Warning' }
+    finally { $form.Cursor = 'Default' }
+}
+$btnAddPack.Add_Click({ Show-AddPack })
+$btnDelPack.Add_Click({
+        if ($lstPacks.SelectedIndex -lt 0) { return }
+        $p = $packs[$lstPacks.SelectedIndex]; if (-not $p.custom) { return }
+        if (-not (Ask-YesNo "'$($p.name)'을(를) 목록에서 뺄까요?`n(이 모드팩으로 만든 서버는 그대로 있지만, 모드팩 업데이트 확인과 [마인크래프트 켜기]는 다시 넣어야 돼요)")) { return }
+        Save-CustomPacks @(Get-CustomPacks | Where-Object { $_.id -ne $p.id })
+        Update-PackList
+    })
+
 $lstPacks.Add_SelectedIndexChanged({
+        if ($lstPacks.SelectedIndex -lt 0 -or $script:packListBusy) { return }
         $p = $packs[$lstPacks.SelectedIndex]
+        $btnDelPack.Enabled = [bool]$p.custom
+        if ($p.custom -and $p.source -eq 'curseforge' -and $p.cfId -and "$($p.refreshed)" -ne (Get-Date -Format 'yyyy-MM-dd')) {
+            # Once a day, new CurseForge versions of an added pack are picked up when it is selected
+            $lblWork.Text = '새 버전이 있는지 확인하는 중...'; $form.Refresh()
+            # Add-CustomPack re-selects the pack, which runs this handler again with the fresh list
+            try { $fresh = New-CfPack ([int]$p.cfId); $lblWork.Text = ''; Add-CustomPack $fresh; return } catch { $lblWork.Text = '' }
+        }
         $lblName.Text = $p.name
         $lblDesc.Text = $p.desc
         $src = 'CurseForge'; if ($p.source -eq 'modrinth') { $src = 'Modrinth' }
@@ -299,7 +443,8 @@ $lstPacks.Add_SelectedIndexChanged({
         $numRam.Value = [Math]::Min($numRam.Maximum, [Math]::Max($numRam.Minimum, $p.ramGB))
         $cmbVer.Items.Clear(); $cmbVer.Items.Add('버전 목록 불러오는 중...') | Out-Null; $cmbVer.SelectedIndex = 0
         $form.Refresh()
-        try { $script:versions = Get-Versions $p } catch { $script:versions = @(); Show-Msg "버전 목록을 불러오지 못했어요. 인터넷 연결을 확인하세요.`n$($_.Exception.Message)" 'Warning' }
+        # @(): a one-version list would otherwise lose its Count in PowerShell 5.1
+        try { $script:versions = @(Get-Versions $p) } catch { $script:versions = @(); Show-Msg "버전 목록을 불러오지 못했어요. 인터넷 연결을 확인하세요.`n$($_.Exception.Message)" 'Warning' }
         $cmbVer.Items.Clear()
         foreach ($v in $script:versions) { [void]$cmbVer.Items.Add($v.text) }
         $txtName.Text = Get-DefaultName $p ''
@@ -480,7 +625,7 @@ $btnAddFriend = New-Ctl Button 738 184 120 42 '친구 추가'
 $lblPlayers = New-Ctl Label 862 184 93 42 '접속 0명'; $lblPlayers.TextAlign = 'MiddleCenter'; $lblPlayers.Font = $bold
 $tip = New-Object Windows.Forms.ToolTip
 $tip.SetToolTip($btnStart, '서버를 열고 Playit으로 친구들이 들어올 수 있게 해요.')
-$tip.SetToolTip($btnLocal, '같은 월드를 내 컴퓨터에서만 열어요. 마인크래프트에서 localhost 로 접속하세요.')
+$tip.SetToolTip($btnLocal, '같은 월드를 내 컴퓨터에서만 열어요. 마인크래프트에서 127.0.0.1 로 접속하세요.')
 $tip.SetToolTip($btnAddFriend, '화이트리스트에 닉네임을 추가해요. 나도 처음 한 번 추가해야 해요.')
 $txtConsole = New-Ctl TextBox 260 232 695 340
 $txtConsole.Multiline = $true; $txtConsole.ReadOnly = $true; $txtConsole.ScrollBars = 'Vertical'; $txtConsole.WordWrap = $false
@@ -533,6 +678,7 @@ $lstSrv.Add_SelectedIndexChanged({ Show-SrvInfo })
 
 # ---------------- running a server inside the window ----------------
 $script:srv = $null   # state of the server this window runs (only one at a time)
+$script:wlSent = New-Object System.Collections.Queue   # names sent with "whitelist add", answered by the server in order
 
 function Set-State($text, $color) { $lblState.Text = $text; $lblState.BackColor = $color }
 function Get-LaunchInfo($d) {
@@ -579,7 +725,7 @@ function Start-Server([switch]$Local) {
             $why = 'Playit 연결 설정이 아직 안 돼 있어서'
             if ($script:playitKeyForeign) { $why = '다른 PC에서 옮겨 와서 Playit 키를 이 PC에서 한 번 다시 넣어야 해서' }
         }
-        if ($why -and -not (Ask-YesNo "$why 친구들은 들어올 수 없어요.`n([Playit 연결 설정]에서 넣을 수 있어요. 나는 localhost 로 들어갈 수 있어요)`n`n그래도 켤까요?")) { return }
+        if ($why -and -not (Ask-YesNo "$why 친구들은 들어올 수 없어요.`n([Playit 연결 설정]에서 넣을 수 있어요. 나는 127.0.0.1 로 들어갈 수 있어요)`n`n그래도 켤까요?")) { return }
         Start-Playit
     }
     $i = Read-Json (Join-Path $d 'server-info.json')
@@ -587,11 +733,12 @@ function Start-Server([switch]$Local) {
     $expect = 40 + [int]($mods * 0.35); if ($i -and $i.bootSeconds) { $expect = [int]$i.bootSeconds }
     $txtConsole.Clear()
     $txtConsole.AppendText("[관리 프로그램] '$($lstSrv.SelectedItem)' 서버를 켜는 중이에요. 끌 때는 [■ 서버 끄기]를 눌러 주세요.`r`n")
+    $script:wlSent.Clear()
     $proc = New-Object McProc($java, $li.args, $d, [Text.Encoding]::Default.CodePage)
     $script:srv = [pscustomobject]@{
         dir = $d; name = $lstSrv.SelectedItem; proc = $proc; sw = [Diagnostics.Stopwatch]::StartNew(); expect = $expect
         done = $false; stopping = $false; stage = 0; spawn = 0; players = @{}; tail = New-Object System.Collections.Generic.List[string]; stopSw = $null
-        local = [bool]$Local; noPlayit = [bool]$why; warned = @{}; askNick = $null
+        local = [bool]$Local; noPlayit = [bool]$why; warned = @{}; askNick = $null; wlBad = $null
     }
     $lstSrv.Enabled = $false; $btnStart.Enabled = $false; $btnLocal.Enabled = $false; $btnStop.Enabled = $true; $btnMods.Enabled = $false; $btnUpdate.Enabled = $false; $btnRamSrv.Enabled = $false
     $prg.Value = 0; $lblPlayers.Text = '접속 0명'
@@ -662,12 +809,12 @@ function Complete-Server {
 $StageText = @('Java 시작하는 중', '모드 로더 준비하는 중', '모드 불러오는 중', '월드 불러오는 중', '스폰 지역 만드는 중')
 function Show-OpenBanner($s) {
     if ($s.local) {
-        Set-State '● 서버 열림!  (혼자 하기: 주소 localhost)' ([Drawing.Color]::ForestGreen)
+        Set-State '● 서버 열림!  (혼자 하기: 주소 127.0.0.1)' ([Drawing.Color]::ForestGreen)
         $lblStage.Text = "게임은 왼쪽 [▶ 마인크래프트 켜기]로 켜세요. 멀티플레이에 내 서버가 들어 있어요. 끌 때는 [서버 끄기]."
     }
     elseif ($s.noPlayit) {
         # Started anyway after the "no Playit" warning: say plainly that friends still can't join
-        Set-State '● 서버 열림!  (Playit이 없어서 지금은 나만: 주소 localhost)' ([Drawing.Color]::DarkOrange)
+        Set-State '● 서버 열림!  (Playit이 없어서 지금은 나만: 주소 127.0.0.1)' ([Drawing.Color]::DarkOrange)
         if (Test-Path -LiteralPath (Join-Path $PlayitDir 'playit.exe')) { $lblStage.Text = "친구들도 들어오게 하려면 → [Playit 연결 설정]에서 비밀 키를 저장하세요. 서버를 끄지 않아도 바로 연결돼요." }
         else { $lblStage.Text = "_program\playit\playit.exe 파일이 없어요 (백신이 지웠을 수 있어요). 프로그램 압축 파일을 다시 풀어서 그 파일만 제자리에 넣어 주세요." }
     }
@@ -741,7 +888,7 @@ function Read-ServerOutput {
             $pend = Join-Path $s.dir 'whitelist-pending.txt'
             if (Test-Path -LiteralPath $pend) {
                 Get-Content -LiteralPath $pend | Where-Object { $_.Trim() } | ForEach-Object {
-                    $s.proc.Send("whitelist add $($_.Trim())")
+                    $script:wlSent.Enqueue($_.Trim()); $s.proc.Send("whitelist add $($_.Trim())")
                     $txtConsole.AppendText("[관리 프로그램] 기다리던 친구를 화이트리스트에 추가해요: $($_.Trim())`r`n")
                 }
                 Remove-Item -LiteralPath $pend
@@ -750,10 +897,23 @@ function Read-ServerOutput {
         if ($line -match ': (\S+) joined the game') { $s.players[$Matches[1]] = $true }
         if ($line -match ': (\S+) left the game') { $s.players.Remove($Matches[1]) }
         if ($line -match 'lost connection: |Disconnecting ') { $note = Find-JoinProblem $s $line; if ($note) { [void]$sb.Append("[관리 프로그램] ※ $note`r`n") } }
+        if ($line -match 'Added \S+ to the whitelist|Player is already whitelisted' -and $script:wlSent.Count) { [void]$script:wlSent.Dequeue() }
+        if ($line -match 'That player does not exist') {
+            # The whitelist only takes real Minecraft account names; a typo would otherwise fail silently
+            $who = '방금 넣은 닉네임'; if ($script:wlSent.Count) { $who = "'$($script:wlSent.Dequeue())'" }
+            $note = "$who 은(는) 마인크래프트에 없는 이름이라 화이트리스트에 못 넣었어요. 철자를 확인하고 [친구 추가]로 다시 넣어 주세요."
+            [void]$sb.Append("[관리 프로그램] ※ $note`r`n"); $lblStage.Text = $note; $s.wlBad = $note
+        }
     }
     if ($sb.Length) {
         if ($txtConsole.TextLength -gt 400000) { $txtConsole.Text = $txtConsole.Text.Substring($txtConsole.TextLength - 200000) }
         $txtConsole.AppendText($sb.ToString())
+    }
+    if ($s.wlBad -and -not $script:askingJoin) {
+        $n = $s.wlBad; $s.wlBad = $null; $script:askingJoin = $true
+        Show-Msg $n 'Warning'
+        $script:askingJoin = $false
+        if ($script:srv -ne $s) { return }
     }
     if ($s.askNick -and -not $script:askingJoin) {
         # Asked after the read loop: the timer keeps ticking while the question is open
@@ -761,7 +921,7 @@ function Read-ServerOutput {
         $ok = Ask-YesNo "'$n' 님이 들어오려고 했는데 화이트리스트에 없어서 막혔어요.`n`n지금 '$n' 님을 추가할까요? (아는 친구일 때만 [예]를 누르세요)"
         $script:askingJoin = $false
         if ($script:srv -ne $s) { return }
-        if ($ok) { $s.proc.Send("whitelist add $n"); $txtConsole.AppendText("> whitelist add $n`r`n[관리 프로그램] '$n' 님을 추가했어요. 다시 접속하라고 알려 주세요.`r`n") }
+        if ($ok) { $script:wlSent.Enqueue($n); $s.proc.Send("whitelist add $n"); $txtConsole.AppendText("> whitelist add $n`r`n[관리 프로그램] '$n' 님을 추가했어요. 다시 접속하라고 알려 주세요.`r`n") }
     }
     $lblPlayers.Text = "접속 $($s.players.Count)명"
     if (-not $s.done -and -not $s.stopping) {
@@ -795,14 +955,16 @@ $btnSend.Add_Click({
 $txtCmd.Add_KeyDown({ param($s, $e) if ($e.KeyCode -eq 'Enter') { $e.SuppressKeyPress = $true; $btnSend.PerformClick() } })
 $btnAddFriend.Add_Click({
         $d = Get-SelDir; if (-not $d) { return }
-        $nick = (Ask-Text "들여보낼 친구의 마인크래프트 닉네임을 입력하세요.`n(자바 에디션 계정 이름)").Trim()
+        # First entry is usually the host's own name: offer the one this PC's game logs show
+        $def = ''; if (-not @(Read-Json (Join-Path $d 'whitelist.json')).Count) { $def = Get-KnownNick }
+        $nick = ("" + (Ask-Text "들여보낼 친구의 마인크래프트 닉네임을 입력하세요.`n(자바 에디션 계정 이름. 처음엔 내 닉네임부터 넣으세요)" $def)).Trim()
         if (-not $nick) { return }
         if ($nick -notmatch '^[A-Za-z0-9_]{3,16}$') { Show-Msg '마인크래프트 닉네임은 영어, 숫자, _ 로 3~16글자예요.'; return }
         if (-not (Add-Whitelist $d $nick)) { Show-Msg "'$nick' 님은 서버가 다음에 켜질 때 자동으로 추가할게요." }
     })
 function Add-Whitelist($d, [string]$nick) {
     # Returns $true when the running server took it right away, $false when it waits for the next start
-    if ($script:srv -and $script:srv.done -and $script:srv.dir -eq $d) { $script:srv.proc.Send("whitelist add $nick"); $txtConsole.AppendText("> whitelist add $nick`r`n"); return $true }
+    if ($script:srv -and $script:srv.done -and $script:srv.dir -eq $d) { $script:wlSent.Enqueue($nick); $script:srv.proc.Send("whitelist add $nick"); $txtConsole.AppendText("> whitelist add $nick`r`n"); return $true }
     Add-Content -LiteralPath (Join-Path $d 'whitelist-pending.txt') -Value $nick
     return $false
 }
@@ -1621,6 +1783,18 @@ function Get-GameRam([int]$serverRam = 0) {
     # What is left after Windows (about 3GB) and a server running on the same PC, between 3 and 8GB
     return [int][Math]::Max(3, [Math]::Min(8, $totalRam - $serverRam - 3))
 }
+function Get-KnownNick {
+    # The game writes "Setting user: <name>" at every start; the newest such log on this PC names the player
+    $logs = @(Get-ChildItem -LiteralPath $GameRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_.FullName 'logs\latest.log' }) + (Join-Path (Get-McDirPath) 'logs\latest.log')
+    $best = ''; $when = [datetime]::MinValue
+    foreach ($l in $logs) {
+        if (-not (Test-Path -LiteralPath $l)) { continue }
+        $t = (Get-Item -LiteralPath $l).LastWriteTime; if ($t -le $when) { continue }
+        try { $m = Select-String -LiteralPath $l -Pattern 'Setting user: ([A-Za-z0-9_]{3,16})\b' -List -ErrorAction Stop } catch { continue }
+        if ($m) { $best = $m.Matches[0].Groups[1].Value; $when = $t }
+    }
+    return $best
+}
 function Stop-GameIfRunning([string]$gd) {
     # A game left open (or frozen on an error screen) would hold its files; offer to close it
     $procs = @(Get-CimInstance Win32_Process -Filter "Name='javaw.exe' OR Name='java.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($gd) })
@@ -1642,7 +1816,9 @@ function Start-HostGame {
     # The host needs to be on the whitelist too; ask once here instead of letting the first join bounce
     $wl = Read-Json (Join-Path $d 'whitelist.json')
     if (-not @($wl).Count -and -not (Test-Path -LiteralPath (Join-Path $d 'whitelist-pending.txt'))) {
-        $nick = (Ask-Text "내 마인크래프트 닉네임(자바 에디션 계정 이름)을 입력하세요.`n내 서버에 들어가려면 화이트리스트에 내 이름이 있어야 해요.").Trim()
+        $known = Get-KnownNick
+        $hint = ''; if ($known) { $hint = "`n`n(이 PC에서 마인크래프트를 켰던 기록에서 찾은 이름을 넣어 뒀어요. 맞으면 [확인])" }
+        $nick = ("" + (Ask-Text "내 마인크래프트 닉네임(자바 에디션 계정 이름)을 입력하세요.`n내 서버에 들어가려면 화이트리스트에 내 이름이 있어야 해요.$hint" $known)).Trim()
         if ($nick -match '^[A-Za-z0-9_]{3,16}$') { [void](Add-Whitelist $d $nick) }
         elseif ($nick) { Show-Msg '마인크래프트 닉네임은 영어, 숫자, _ 로 3~16글자예요. 나중에 [친구 추가]로 넣어 주세요.' }
     }
@@ -1656,7 +1832,7 @@ function Start-HostGame {
         }
     }
     $script:gameJob = @{ gameDir = $gd }
-    Start-InstallJob "-Client -PackId $($i.pack) -VersionKey `"$($i.version)`" -Name `"$name`" -FromServer `"$d`" -GameDir `"$gd`" -Address localhost -GameRamGB $(Get-GameRam $sr)" 'game'
+    Start-InstallJob "-Client -PackId $($i.pack) -VersionKey `"$($i.version)`" -Name `"$name`" -FromServer `"$d`" -GameDir `"$gd`" -Address 127.0.0.1 -GameRamGB $(Get-GameRam $sr)" 'game'
 }
 $btnPlay.Add_Click({ Start-HostGame })
 
@@ -1703,6 +1879,14 @@ function Get-JoinCode($d) {
     $i = Read-Json (Join-Path $d 'server-info.json'); if (-not $i -or -not $i.pack) { return '' }
     $mods = @(Get-AddedMods $d | Where-Object { $_.forClient -and $_.projectId } | ForEach-Object { [ordered]@{ p = $_.projectId; f = $_.file } })
     $o = [ordered]@{ v = 1; p = $i.pack; k = (Get-VersionKey $d $i); n = (Split-Path $d -Leaf); a = (Get-PlayitAddress); m = $mods }
+    # A pack the host added by hand is unknown to the friend's copy: the code carries it (CurseForge: just this version)
+    $cp = Get-CustomPacks | Where-Object { $_.id -eq $i.pack } | Select-Object -First 1
+    if ($cp) {
+        $rec = ConvertTo-PackRecord $cp
+        if ($rec.Contains('versions')) { $rec['versions'] = @($rec['versions'] | Where-Object { $_.label -eq $i.version }) }
+        $rec.Remove('desc'); $rec.Remove('refreshed')
+        $o['d'] = $rec
+    }
     return 'MCSM1-' + (ConvertTo-B64Url ($o | ConvertTo-Json -Compress -Depth 4))
 }
 function Read-JoinCode([string]$text) {
@@ -1743,11 +1927,24 @@ $txtCode.Add_TextChanged({
         }
         $p = $packs | Where-Object { $_.id -eq $c.p } | Select-Object -First 1
         $ver = $c.k; if ($p -and $p.source -eq 'curseforge' -and -not ($p.versions | Where-Object label -eq $c.k)) { $p = $null }
+        $extra = ''
+        if (-not $p -and (Test-PackDef $c)) { $p = $c.d; $extra = '   (방장이 직접 추가한 모드팩이라, 설치할 때 이 PC 목록에도 넣어요)' }
         if (-not $p) { $lblJInfo.ForeColor = [Drawing.Color]::Firebrick; $lblJInfo.Text = '이 프로그램이 모르는 모드팩이나 버전이에요. 프로그램을 껐다가 다시 켜서 최신 버전으로 업데이트한 다음 다시 붙여 넣어 주세요.'; $script:joinCode = $null; return }
         $lblJInfo.ForeColor = [Drawing.Color]::DarkGreen
-        $lblJInfo.Text = "서버: $($c.n)   |   모드팩: $($p.name)   |   방장이 추가한 모드: $(@($c.m).Count)개`n아래 [▶ 설치하고 게임 켜기]를 누르세요."
+        $lblJInfo.Text = "서버: $($c.n)   |   모드팩: $($p.name)   |   방장이 추가한 모드: $(@($c.m).Count)개$extra`n아래 [▶ 설치하고 게임 켜기]를 누르세요."
         if ($c.a) { $txtJAddr.Text = $c.a }
     })
+function Test-PackDef($c) {
+    # A pack definition carried in a join code: only Modrinth slugs and CurseForge's own file server are accepted
+    $d = $c.d
+    if (-not $d -or $d.id -ne $c.p -or "$($d.name)" -eq '') { return $false }
+    if ($d.source -eq 'modrinth') { return ($d.id -eq "mr-$($d.slug)") -and ("$($d.slug)" -match '^[A-Za-z0-9_-]{2,64}$') }
+    if ($d.source -eq 'curseforge') {
+        $v = @($d.versions | Where-Object { $_.label -eq $c.k })
+        return ($v.Count -eq 1) -and (Test-ServerPackUrl $v[0].url) -and ([long]$v[0].size -gt 0) -and ("$($d.loader)" -in 'forge', 'neoforge', 'fabric')
+    }
+    return $false
+}
 function ConvertTo-ModsB64($list) {
     # Written by hand: Windows PowerShell 5.1 re-serializes arrays that came out of ConvertFrom-Json as {"value":[...],"Count":n}
     $items = @(foreach ($x in @($list)) {
@@ -1758,9 +1955,12 @@ function ConvertTo-ModsB64($list) {
 }
 function Start-JoinGame($c, [string]$addr, [int]$ram, $modsB64 = $null) {   # untyped: a [string] parameter would turn $null into ''
     if ($script:installProc) { Show-Msg '다른 설치가 진행 중이에요. 끝난 다음에 해 주세요.'; return }
-    if ($addr -match '^\s*localhost\s*$') { $addr = 'localhost' } else { $addr = ConvertTo-PlayitAddress $addr }
+    if ($addr -match '^\s*(127.0.0.1|127\.0\.0\.1)\s*$') { $addr = '127.0.0.1' } else { $addr = ConvertTo-PlayitAddress $addr }
     if (-not $addr) { Show-Msg "서버 주소를 넣어 주세요.`n방장에게 '어쩌구.joinmc.link' 같은 주소를 물어봐서 [서버 주소] 칸에 넣으면 돼요."; return }
     if (-not (Test-McLauncher)) { return }
+    if (-not ($packs | Where-Object { $_.id -eq $c.p }) -or (($packs | Where-Object { $_.id -eq $c.p }).source -eq 'curseforge' -and -not (($packs | Where-Object { $_.id -eq $c.p }).versions | Where-Object label -eq $c.k))) {
+        if (Test-PackDef $c) { Add-CustomPack $c.d -NoSelect }
+    }
     $gd = Join-Path $GameRoot "join-$($c.n)"
     if (-not (Stop-GameIfRunning $gd)) { return }
     if (-not (Close-McLauncher)) { return }

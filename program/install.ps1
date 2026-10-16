@@ -12,7 +12,7 @@
     [switch]$Client,
     [string]$GameDir = '',     # where the game files go (<root>\game\<name>)
     [string]$FromServer = '',  # host on the same PC: take the files from this server folder instead of downloading
-    [string]$Address = 'localhost',
+    [string]$Address = '127.0.0.1',
     [string]$AddedMods = '',   # friend: base64 JSON [{p: modrinthProjectId, f: fileName}, ...] the host added by hand
     [int]$GameRamGB = 6
 )
@@ -669,8 +669,25 @@ function Remove-ServerOnlyMods([string]$mods) {
     if (-not $serverOnly.Count) { return }
     $park = Join-Path (Split-Path $mods -Parent) '_server_only_mods'
     New-Item -ItemType Directory -Force $park | Out-Null
-    foreach ($h in $projOf.Keys) { if ($serverOnly.ContainsKey($projOf[$h])) { Move-Item -LiteralPath $byHash[$h].FullName -Destination $park -Force } }
-    Info "서버 전용 모드 $($serverOnly.Count)개는 게임에 필요 없어서 뺐어요: $(@($serverOnly.Values | Select-Object -First 5) -join ', ')"
+    # Modrinth's flag alone is not enough (FarmersStructures is "server only" there, yet Forge refuses a game without it):
+    # a jar also has to declare itself optional for the game with displayTest IGNORE_SERVER_VERSION / IGNORE_ALL_VERSION
+    $moved = @()
+    foreach ($h in $projOf.Keys) {
+        if (-not $serverOnly.ContainsKey($projOf[$h])) { continue }
+        $jar = $byHash[$h]; $z = $null; $optional = $false
+        try {
+            $z = [IO.Compression.ZipFile]::OpenRead($jar.FullName)
+            foreach ($tn in 'META-INF/mods.toml', 'META-INF/neoforge.mods.toml') {
+                $e = $z.GetEntry($tn); if (-not $e) { continue }
+                $sr = New-Object IO.StreamReader($e.Open()); $toml = $sr.ReadToEnd(); $sr.Dispose()
+                if ($toml -match '(?m)^\s*displayTest\s*=\s*"IGNORE_(SERVER|ALL)_VERSION"') { $optional = $true }
+            }
+        }
+        catch { }
+        finally { if ($z) { $z.Dispose() } }
+        if ($optional) { Move-Item -LiteralPath $jar.FullName -Destination $park -Force; $moved += $serverOnly[$projOf[$h]] }
+    }
+    if ($moved.Count) { Info "서버 전용 모드 $($moved.Count)개는 게임에 필요 없어서 뺐어요: $(@($moved | Select-Object -First 5) -join ', ')" }
 }
 
 function Add-MissingClientDeps([string]$mods, $li) {
@@ -787,7 +804,7 @@ function Install-Client($pack) {
     }
     else { $verLabel = $VersionKey; $sigSrc = "$($pack.id)|$VersionKey|$AddedMods" }
     # Bumped whenever the way the game folder is built changes, so existing game folders get rebuilt once
-    $sigSrc = "build2|$sigSrc"
+    $sigSrc = "build3|$sigSrc"
     $sha = [Security.Cryptography.SHA256]::Create()
     $sig = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($sigSrc)) | ForEach-Object { $_.ToString('x2') })
 
@@ -850,8 +867,15 @@ function Install-Client($pack) {
 }
 
 try {
-    $packs = (Get-Content (Join-Path $Prog 'packs.json') -Raw -Encoding UTF8 | ConvertFrom-Json).packs
+    $packs = @((Get-Content (Join-Path $Prog 'packs.json') -Raw -Encoding UTF8 | ConvertFrom-Json).packs | ForEach-Object { $_ })
     $pack = $packs | Where-Object id -eq $PackId
+    $customFile = Join-Path $Prog 'custom-packs.json'
+    if (-not $pack -and (Test-Path -LiteralPath $customFile)) {
+        # Packs the user added; their CurseForge server packs may only come from CurseForge's own file server
+        $pack = (Get-Content -LiteralPath $customFile -Raw -Encoding UTF8 | ConvertFrom-Json).packs | ForEach-Object { $_ } | Where-Object id -eq $PackId | Select-Object -First 1
+        if ($pack -and $pack.source -eq 'curseforge' -and @($pack.versions | Where-Object { $_.url -notmatch '^https://(mediafilez|edge)\.forgecdn\.net/files/\d+/\d+/[^/?#]+$' }).Count) { throw '직접 추가한 모드팩의 다운로드 주소가 CurseForge가 아니에요.' }
+        if ($pack -and $pack.source -eq 'modrinth' -and "$($pack.slug)" -notmatch '^[A-Za-z0-9_-]{2,64}$') { throw '직접 추가한 모드팩 정보가 이상해요.' }
+    }
     if (-not $pack) { throw "목록에 없는 모드팩이에요: $PackId" }
     if ($Client) {
         Install-Client $pack
@@ -1112,12 +1136,12 @@ if errorlevel 1 start "playit - 이 창도 닫지 마세요" /min "%PROG%\playit
 goto run
 :nokey
 echo [주의] Playit 키가 없거나 이 PC에서 풀 수 없어요. 모드팩서버관리.exe 의 [Playit 연결 설정]에서 키를 넣어 주세요.
-echo        지금은 이 컴퓨터에서 localhost 로만 들어갈 수 있어요.
+echo        지금은 이 컴퓨터에서 127.0.0.1 로만 들어갈 수 있어요.
 echo.
 goto run
 :noplayit
 echo [주의] _program\playit\playit.exe 파일이 없어서 Playit을 켜지 못했어요.
-echo        친구들은 접속할 수 없고, 이 컴퓨터에서는 localhost 로 들어갈 수 있어요.
+echo        친구들은 접속할 수 없고, 이 컴퓨터에서는 127.0.0.1 로 들어갈 수 있어요.
 echo.
 :run
 "%PROG%\java\$major\bin\java.exe" $launch

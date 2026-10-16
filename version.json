@@ -1,19 +1,19 @@
 {
-    "version":  "1.0.6",
-    "date":  "2026-10-16",
-    "notes":  "모드팩 게임이 켜지다 멈추던 문제를 고쳤어요(빠진 필수 모드를 자동으로 넣고, 게임에 필요 없는 서버 전용 모드는 빼요). 서버 램을 잘못 읽어서 게임에 램을 너무 많이 주던 문제도 고쳤어요. [▶ 마인크래프트 켜기]를 한 번 더 누르면 게임이 새로 준비돼요.",
+    "version":  "1.0.7",
+    "date":  "2026-10-17",
+    "notes":  "[+ 모드팩 추가]로 목록에 없는 모드팩(Modrinth 주소, CurseForge Project ID)을 넣을 수 있어요. 내 서버 주소를 localhost 대신 127.0.0.1로 써서 접속이 거절되던 문제를 고쳤어요. 게임에 필요한 모드가 빠져 접속이 막히던 문제, 버전이 하나뿐인 모드팩 문제도 고쳤어요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "0237fe24ea06ab379107f4b100084cfddada5675e559f24a8a8521e982a277f0"
+                      "sha256":  "8642919681dfc13b0d839825da2607c2443bd268ddc1f3436ff5422c859d49ee"
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "509584af588b2fc59c23c127c3d50d3d2dfe8c8226c01468479b213bbeb89d16"
+                      "sha256":  "a73b6993ec5da97871e05770f85e941c1af1508fe2aec95d0628c530adba4b86"
                   },
                   {
                       "path":  "packs.json",
-                      "sha256":  "94d2131c7b74003394659f813a6eba94964efa68e75fc8a463c74db215b573aa"
+                      "sha256":  "23a95c083bd6c4e0803290649371c5b403624fa6b1c9ad4956e173d7b1f5ef1f"
                   },
                   {
                       "path":  "client-only-mods.txt",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "8d9d1f79a1720846756a0d3b52e1d6bcf54379eb55edb59cbbd7411e6b9ca1d9"
+                      "sha256":  "42c92e6b3e2ff5835faff3f63f142331bc04449bf06f4d8cf49fd72aafad4dd2"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "e1cb79b8bbad0d3924995d2e16971fe3440ce2464d59d88604925c0d6b0b6c5d"
+                      "sha256":  "e9f981f1154c92381d63b653cfbfc79be92c3f6cc95e0915a5e5c19f3924ca58"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "1550dcc70943d1228684e5d6efdd7eac830c38d6cb79452d97e723c2fad76612"
+                     "sha256":  "8a9e551e696d82a1fb73bdea7a46903d156483ad20c6e5f1cd5d49f687a297a5"
                  }
 }
