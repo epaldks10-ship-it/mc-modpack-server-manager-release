@@ -1779,9 +1779,19 @@ function Start-McLauncher {
 function Test-GameRunning([string]$gd) {
     return [bool](Get-CimInstance Win32_Process -Filter "Name='javaw.exe' OR Name='java.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($gd) })
 }
+$script:igpu = $null
+function Test-IntegratedGpu {
+    # Integrated graphics borrow system RAM, so the game has less to work with
+    if ($null -eq $script:igpu) {
+        $gpus = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.Name })
+        $script:igpu = -not (@($gpus | Where-Object { $_ -match 'GeForce|RTX|GTX|Quadro|Radeon RX|Radeon Pro|Arc A|Arc B' }).Count)
+    }
+    return $script:igpu
+}
 function Get-GameRam([int]$serverRam = 0) {
-    # What is left after Windows (about 3GB) and a server running on the same PC, between 3 and 8GB
-    return [int][Math]::Max(3, [Math]::Min(8, $totalRam - $serverRam - 3))
+    # What is left after Windows (about 3GB), integrated graphics (about 1GB) and a server on the same PC, between 4 and 8GB
+    $gpu = 0; if (Test-IntegratedGpu) { $gpu = 1 }
+    return [int][Math]::Max(4, [Math]::Min(8, $totalRam - $serverRam - 3 - $gpu))
 }
 function Get-KnownNick {
     # The game writes "Setting user: <name>" at every start; the newest such log on this PC names the player

@@ -1,15 +1,15 @@
 {
-    "version":  "1.0.7",
+    "version":  "1.0.8",
     "date":  "2026-10-17",
-    "notes":  "[+ 모드팩 추가]로 목록에 없는 모드팩(Modrinth 주소, CurseForge Project ID)을 넣을 수 있어요. 내 서버 주소를 localhost 대신 127.0.0.1로 써서 접속이 거절되던 문제를 고쳤어요. 게임에 필요한 모드가 빠져 접속이 막히던 문제, 버전이 하나뿐인 모드팩 문제도 고쳤어요.",
+    "notes":  "내장 그래픽이나 램이 적은 PC에서는 게임 그래픽 설정을 가볍게 맞추고(한 번만, 원래 설정은 백업), 게임 램을 알맞게 잡고, 프레임을 올려 주는 EntityCulling 모드를 넣어요. [▶ 마인크래프트 켜기]를 한 번 누르면 적용돼요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "8642919681dfc13b0d839825da2607c2443bd268ddc1f3436ff5422c859d49ee"
+                      "sha256":  "6348f7c6c3e50ba10768743d0121a2f23f50e3f583f839f397cbd7021ea105b0"
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "a73b6993ec5da97871e05770f85e941c1af1508fe2aec95d0628c530adba4b86"
+                      "sha256":  "b6f092bacb6ed99af158616b9d3735706f0f1b20b8a82fad7d5bac71c229f3ef"
                   },
                   {
                       "path":  "packs.json",
@@ -25,11 +25,11 @@
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "e9f981f1154c92381d63b653cfbfc79be92c3f6cc95e0915a5e5c19f3924ca58"
+                      "sha256":  "a61552bd969df8ea8acbc43ca7288cbb4d5d38365a610c8021a427e26a51851d"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "8a9e551e696d82a1fb73bdea7a46903d156483ad20c6e5f1cd5d49f687a297a5"
+                     "sha256":  "a56379ebff955548764123f0e8184dea02875c7a2d66ea800c281576c1d113aa"
                  }
 }

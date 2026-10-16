@@ -778,6 +778,41 @@ function Add-MissingClientDeps([string]$mods, $li) {
     }
 }
 
+function Test-WeakPc {
+    # Integrated graphics (the GPU borrows system RAM and is slow) or 16GB or less: a big modpack needs lighter settings
+    $ram = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB
+    $gpus = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.Name })
+    $discrete = @($gpus | Where-Object { $_ -match 'GeForce|RTX|GTX|Quadro|Radeon RX|Radeon Pro|Arc A|Arc B' }).Count -gt 0
+    return ($ram -le 16.5) -or (-not $discrete)
+}
+function Set-LightOptions([string]$opt) {
+    # Only the heavy switches; the player's keys, sound, language and the rest stay as they are
+    $light = [ordered]@{ renderDistance = '8'; simulationDistance = '6'; graphicsMode = '0'; particles = '1'; entityShadows = 'false'; biomeBlendRadius = '0'
+        renderClouds = '"false"'; mipmapLevels = '2'; enableVsync = 'false'; maxFps = '60'; entityDistanceScaling = '0.75'; ao = 'false' }
+    $lines = @(); if (Test-Path -LiteralPath $opt) { $lines = @([IO.File]::ReadAllLines($opt)) }
+    $seen = @{}
+    $out = foreach ($l in $lines) { if ($l -match '^([A-Za-z]+):' -and $light.Contains($Matches[1])) { $seen[$Matches[1]] = $true; "$($Matches[1]):$($light[$Matches[1]])" } else { $l } }
+    $out = @($out) + @($light.Keys | Where-Object { -not $seen.ContainsKey($_) } | ForEach-Object { "$($_):$($light[$_])" })
+    if (-not ($out | Where-Object { $_ -match '^lang:' })) { $out += 'lang:ko_kr' }
+    if (Test-Path -LiteralPath $opt) { Copy-Item -LiteralPath $opt -Destination "$opt.before-light" -Force }
+    [IO.File]::WriteAllLines($opt, [string[]]$out, (New-Object Text.UTF8Encoding($false)))
+}
+function Add-PerformanceMods([string]$mods, $li) {
+    # A game built from a server pack misses the pack's client-side frame-rate mods; EntityCulling is the big, safe one
+    $have = @{}
+    foreach ($jar in @(Get-ChildItem -LiteralPath $mods -Filter '*.jar' -File)) {
+        $z = $null; try { $z = [IO.Compression.ZipFile]::OpenRead($jar.FullName); foreach ($i in (Get-JarModInfo $z $li.loader).ids) { $have[$i] = $true } } catch { } finally { if ($z) { $z.Dispose() } }
+    }
+    foreach ($w in @(@{ slug = 'entityculling'; id = 'entityculling' })) {
+        if ($have.ContainsKey($w.id)) { continue }
+        $q = '?loaders=' + [uri]::EscapeDataString("[`"$($li.loader)`"]") + '&game_versions=' + [uri]::EscapeDataString("[`"$($li.mc)`"]")
+        try { $v = @(Invoke-RestMethod "https://api.modrinth.com/v2/project/$($w.slug)/version$q" | ForEach-Object { $_ }) | Where-Object { $_.version_type -eq 'release' } | Select-Object -First 1 } catch { continue }
+        if (-not $v) { continue }
+        $f = $v.files | Where-Object primary | Select-Object -First 1; if (-not $f) { $f = $v.files[0] }
+        try { Get-Download $f.url (Join-Path $mods $f.filename) -Sha1 $f.hashes.sha1; Info "프레임을 올려 주는 모드를 넣었어요: $($f.filename)" } catch { }
+    }
+}
+
 function Install-Client($pack) {
     if ($Name -notmatch '^[A-Za-z0-9]([A-Za-z0-9 ._-]{0,58}[A-Za-z0-9_-])?$') { throw "이름으로 쓸 수 없어요: '$Name'" }
     if ($Address -notmatch '^[A-Za-z0-9.-]+(:\d{1,5})?$') { throw "서버 주소가 이상해요: '$Address'" }
@@ -804,7 +839,7 @@ function Install-Client($pack) {
     }
     else { $verLabel = $VersionKey; $sigSrc = "$($pack.id)|$VersionKey|$AddedMods" }
     # Bumped whenever the way the game folder is built changes, so existing game folders get rebuilt once
-    $sigSrc = "build3|$sigSrc"
+    $sigSrc = "build4|$sigSrc"
     $sha = [Security.Cryptography.SHA256]::Create()
     $sig = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($sigSrc)) | ForEach-Object { $_.ToString('x2') })
 
@@ -829,6 +864,7 @@ function Install-Client($pack) {
         Step '게임에 맞게 모드 정리하는 중'
         Remove-ServerOnlyMods (Join-Path $script:tmp 'mods')
         Add-MissingClientDeps (Join-Path $script:tmp 'mods') $li
+        if ($pack.source -ne 'modrinth') { Add-PerformanceMods (Join-Path $script:tmp 'mods') $li }
 
         Step '게임 폴더에 넣는 중'
         # mods is replaced as a whole (old versions must go); configs are laid over; worlds, screenshots and settings stay
@@ -854,10 +890,16 @@ function Install-Client($pack) {
     # A fresh game folder starts in Korean; afterwards the player's own settings are left alone
     $opt = Join-Path $gd 'options.txt'
     if (-not (Test-Path -LiteralPath $opt)) { [IO.File]::WriteAllText($opt, "lang:ko_kr`r`n", (New-Object Text.UTF8Encoding($false))) }
+    # Weaker PCs get lighter graphics once (a backup is kept); later changes in the game's own settings are left alone
+    $light = $old -and $old.PSObject.Properties['light'] -and $old.light
+    if (-not $light -and (Test-WeakPc)) {
+        Set-LightOptions $opt; $light = $true
+        Info '이 컴퓨터(내장 그래픽 또는 램 16GB 이하)에 맞게 게임 그래픽을 가볍게 바꿨어요. 게임 안 [설정]에서 언제든 바꿀 수 있어요.'
+    }
     [ordered]@{
         kind = $(if ($host_) { 'host' } else { 'friend' }); name = $Name; pack = $pack.id; packName = $pack.name; version = $verLabel; versionKey = $VersionKey
         versionId = $vid; loader = $li.loader; loaderVersion = $li.version; mc = $li.mc; address = $Address; addedMods = $AddedMods
-        profile = $profKey; profileName = $label; serverEntry = $entry; sig = $sig; ramGB = $GameRamGB; installed = (Get-Date -Format 'yyyy-MM-dd HH:mm')
+        profile = $profKey; profileName = $label; serverEntry = $entry; sig = $sig; light = [bool]$light; ramGB = $GameRamGB; installed = (Get-Date -Format 'yyyy-MM-dd HH:mm')
     } | ConvertTo-Json | Set-Content -LiteralPath $markerFile -Encoding UTF8
     Write-Host ''
     Write-Host '==================================================' -ForegroundColor Green
