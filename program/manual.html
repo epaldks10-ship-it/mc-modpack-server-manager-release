@@ -7,20 +7,22 @@
 <style>
   body { font-family: "Malgun Gothic", sans-serif; font-size: 15px; line-height: 1.65; color: #222; background: #fff; margin: 0; padding: 18px 26px 60px; }
   h1 { font-size: 24px; margin: 0 0 4px; }
-  h2 { font-size: 19px; margin: 34px 0 10px; padding: 6px 10px; background: #eef3ea; border-left: 5px solid #3a7d2c; }
+  h2 { font-size: 19px; margin: 36px 0 10px; padding: 6px 10px; background: #eef3ea; border-left: 5px solid #3a7d2c; }
   h3 { font-size: 16px; margin: 20px 0 6px; }
   .lead { color: #555; margin: 0 0 14px; }
   ol, ul { margin: 6px 0 10px 22px; padding: 0; }
-  li { margin: 3px 0; }
+  li { margin: 4px 0; }
   code { font-family: Consolas, monospace; background: #f1f1f1; border: 1px solid #ddd; padding: 0 4px; border-radius: 3px; }
   .btn { display: inline-block; background: #e8e8e8; border: 1px solid #aaa; border-radius: 3px; padding: 0 6px; font-weight: bold; }
+  .go { color: #1a5fb4; font-weight: bold; }
   .warn { background: #fff4e5; border: 1px solid #f0b46b; padding: 8px 12px; margin: 10px 0; }
   .ok { background: #ecf7ea; border: 1px solid #8fc985; padding: 8px 12px; margin: 10px 0; }
+  .flow { background: #eef4fb; border: 2px solid #7aa7dd; padding: 10px 16px; margin: 12px 0 18px; }
+  .flow-title { font-size: 18px; font-weight: bold; color: #1a5fb4; margin-bottom: 4px; }
   table { border-collapse: collapse; margin: 8px 0 14px; width: 100%; }
   th, td { border: 1px solid #ccc; padding: 6px 9px; text-align: left; vertical-align: top; }
   th { background: #f4f4f4; }
   .dot { display: inline-block; width: 12px; height: 12px; border-radius: 6px; margin-right: 6px; vertical-align: middle; }
-  .toc a { color: #2a5db0; }
   .danger { border: 4px solid #c62828; background: #fdecea; padding: 12px 18px 8px; margin: 14px 0 18px; }
   .danger-title { font-size: 22px; font-weight: bold; color: #c62828; margin-bottom: 6px; }
   .danger li { margin: 8px 0; }
@@ -29,70 +31,71 @@
   .st-off { background: #c62828; }
   .st-on { background: #2e7d32; }
   .st-any { background: #607d8b; }
-  .legend td { border: none; padding: 2px 8px 2px 0; }
+  .legend td { border: none; padding: 2px 10px 2px 0; }
 </style>
 </head>
 <body>
 
 <h1>마인크래프트 모드팩 서버 사용 설명서</h1>
-<p class="lead">이 프로그램 하나로 모드팩 서버를 만들고, 켜고, 친구를 들여보내고, 모드를 추가할 수 있어요.</p>
+<p class="lead">이 프로그램 하나로 서버를 만들고, 켜고, 친구를 들여보내고, 모드와 설정을 바꿀 수 있어요. 파일을 직접 열어서 고칠 일은 없어요.</p>
 
 <div class="danger">
   <div class="danger-title">⚠ 꼭 먼저 읽어 주세요</div>
   <ol>
     <li><b class="red">이 폴더를 통째로 남에게 주거나 인터넷에 올리지 마세요.</b><br>
-      카톡, 디스코드, 구글 드라이브, 원드라이브 등에 <code>모드팩서버관리.bat</code>이 있는 폴더를 올리면 안 돼요.
-      안에 <b>우리 월드, 화이트리스트, 서버 설정</b>이 다 들어 있어요. (Playit 비밀 키는 이 PC에서만 풀리게 암호화돼 있어서 남이 쓸 수는 없어요)<br>
-      친구에게 보내도 되는 건 딱 두 가지예요. <b>① [친구 접속 안내]의 글</b>, <b>② 친구용_추가모드 폴더</b>.</li>
-    <li><b class="red">서버가 켜져 있을 때 컴퓨터를 끄거나 프로그램을 강제 종료하지 마세요.</b><br>
-      반드시 <b>[■ 서버 끄기]</b>를 누르고 "꺼짐"이 될 때까지 기다리세요. 그냥 끄면 <b>월드가 망가질 수 있어요.</b></li>
+      카톡, 디스코드, 구글 드라이브, 원드라이브 등에 <code>모드팩서버관리.exe</code>가 있는 폴더를 올리면 안 돼요. 우리 월드, 화이트리스트, 서버 설정이 다 들어 있어요.<br>
+      친구에게 보내도 되는 건 딱 두 가지예요. <b>① [친구 접속 안내]의 글</b>, <b>② 친구용_추가모드 폴더</b>. <span class="go">→ <a href="#friend">4번</a></span></li>
+    <li><b class="red">서버가 켜져 있을 때 컴퓨터를 끄지 마세요.</b><br>
+      반드시 <span class="btn">■ 서버 끄기</span>를 누르고 <b>"꺼짐"</b>이 될 때까지 기다리세요. 그냥 끄면 <b>월드가 망가질 수 있어요.</b>
+      (프로그램 창을 닫으려고 하면 "안전하게 끄고 닫을까요?"라고 물어봐 줘요)</li>
     <li><b class="red">같은 서버를 두 PC에서 동시에 켜지 마세요.</b> 월드가 둘로 갈라져서 한쪽 플레이가 사라져요.</li>
-    <li><b class="red">모드를 넣거나 빼기 전에는 [월드 백업]부터 하세요.</b></li>
+    <li><b class="red">모드를 넣거나 빼기 전에는 백업부터 하세요.</b> <span class="go">→ <a href="#backup">7번 ①</a></span></li>
   </ol>
 </div>
 
+<div class="flow">
+  <div class="flow-title">처음 시작하기: 이 순서대로만 하면 돼요</div>
+  <ol>
+    <li><code>모드팩서버관리.exe</code>를 더블클릭해서 프로그램을 켜요.</li>
+    <li>친구랑 할 거라면 Playit부터 연결해요. <span class="go">→ <a href="#playit">1번</a></span> (혼자만 할 거면 건너뛰어요)</li>
+    <li>모드팩을 골라 서버를 만들어요. <span class="go">→ <a href="#make">2번</a></span></li>
+    <li>서버를 켜요. <span class="go">→ <a href="#run">3번</a></span></li>
+    <li>서버가 열리면 <b>내 닉네임</b>을 화이트리스트에 추가해요. <span class="go">→ <a href="#friend">4번 ①</a></span></li>
+    <li>마인크래프트에서 <code>localhost</code>로 들어가 봐요. <span class="go">→ <a href="#run">3번 ④</a></span></li>
+    <li>친구 닉네임을 추가하고, 접속 안내를 보내요. <span class="go">→ <a href="#friend">4번 ①, ②</a></span></li>
+  </ol>
+  막히면 <span class="go">→ <a href="#trouble">10번 문제 해결</a></span>에서 증상을 찾아보세요.
+</div>
+
 <table class="legend">
-  <tr><td><b>각 항목 옆 표시의 뜻</b></td>
-      <td><span class="st st-off">서버 끈 상태에서</span> 반드시 서버를 끄고 하세요</td>
-      <td><span class="st st-on">서버 켜진 상태에서</span> 서버가 켜져 있어야 돼요</td>
-      <td><span class="st st-any">언제든지</span> 켜져 있든 꺼져 있든 괜찮아요</td></tr>
+  <tr><td><b>제목 옆 표시</b></td>
+      <td><span class="st st-off">서버 끈 상태에서</span> 서버가 켜져 있으면 버튼이 막혀요</td>
+      <td><span class="st st-on">서버 켜진 상태에서</span></td>
+      <td><span class="st st-any">언제든지</span></td></tr>
 </table>
 
-<p class="toc">
-  <a href="#playit">1. Playit 연결</a> |
-  <a href="#make">2. 서버 만들기</a> |
-  <a href="#run">3. 서버 켜고 끄기</a> |
-  <a href="#friend">4. 친구 들여보내기</a> |
-  <a href="#mods">5. 모드 추가</a> |
-  <a href="#update">6. 모드팩 업데이트</a> |
-  <a href="#ram">7. 서버 램</a> |
-  <a href="#backup">8. 백업, 다른 PC</a> |
-  <a href="#security">9. 보안</a> |
-  <a href="#trouble">10. 문제 해결</a>
-</p>
-
-<h2 id="playit">1. 처음 한 번만: Playit 연결 <span class="st st-any">언제든지</span></h2>
-<p>Playit은 친구들이 들어올 <b>인터넷 주소</b>를 만들어 주는 무료 서비스예요. 공유기 설정은 필요 없어요. 처음 한 번만 하면 돼요. 혼자서만 할 거면 안 해도 돼요.</p>
+<h2 id="playit">1. Playit 연결 (처음 한 번만) <span class="st st-any">언제든지</span></h2>
+<p>Playit은 친구들이 들어올 <b>인터넷 주소</b>를 만들어 주는 무료 서비스예요. 공유기 설정은 필요 없어요.</p>
 <ol>
   <li><span class="btn">내 서버</span> 탭 왼쪽의 <span class="btn">Playit 연결 설정</span>을 눌러요.</li>
   <li><span class="btn">비밀 키 만드는 페이지 열기</span>를 누르고 playit.gg에 로그인해요. 계정이 없으면 구글 계정 등으로 가입해요(무료).</li>
   <li>화면 안내를 따라가면 <b>비밀 키(Secret Key)</b>가 나와요. 복사해요.</li>
-  <li>설정 창의 칸에 붙여 넣고 <span class="btn">저장</span>을 눌러요. 서버가 켜져 있었다면 Playit이 알아서 다시 켜져요. 키는 <b>이 PC의 내 Windows 계정에서만 풀리게 암호화</b>해서 저장해요.</li>
-  <li><span class="btn">터널 페이지 열기</span> → <b>Add Tunnel</b>을 눌러요. 종류 <b>Minecraft Java</b>, 주소 <code>127.0.0.1</code>, 포트 <code>25565</code>로 만들어요.</li>
-  <li>터널 목록의 <code>어쩌구.joinmc.link</code> 같은 주소가 <b>우리 서버 주소</b>예요. 친구들에게 알려 주세요. 이 주소는 바뀌지 않고, 어떤 모드팩 서버를 켜든 같은 주소를 써요.</li>
+  <li>설정 창의 칸에 붙여 넣고 <span class="btn">저장</span>을 눌러요. 키는 <b>이 PC의 내 Windows 계정에서만 풀리게 암호화</b>돼서 저장돼요.</li>
+  <li id="playit-tunnel"><b>[터널 만들기]</b> <span class="btn">터널 페이지 열기</span> → <b>Add Tunnel</b>을 눌러요. 종류 <b>Minecraft Java</b>, 주소 <code>127.0.0.1</code>, 포트 <code>25565</code>로 만들어요.</li>
+  <li>터널 목록의 <code>어쩌구.joinmc.link</code> 같은 주소가 <b>우리 서버 주소</b>예요. 이 주소를 복사해 두세요. <span class="go">→ 다음: <a href="#friend">4번 ②</a>에서 친구에게 보내요</span></li>
 </ol>
-<p>설정이 끝나면 <span class="btn">▶ 친구랑 하기</span>로 켤 때 Playit이 자동으로 같이 켜져요. 왼쪽 아래에 <b>Playit: 실행 중</b>이라고 나오면 정상이에요.</p>
+<p>이제 <span class="btn">▶ 친구랑 하기</span>로 켜면 Playit도 같이 켜지고, 서버를 끄면 같이 꺼져요. 왼쪽 아래에 <b>Playit: 실행 중</b>이 보이면 정상이에요. 어떤 모드팩 서버를 켜든 같은 주소를 써요.</p>
 
 <h2 id="make">2. 서버 만들기 <span class="st st-any">언제든지</span></h2>
-<p>다른 서버가 켜져 있어도 만들 수 있어요. 다만 만드는 동안에는 서버를 새로 켤 수 없어요.</p>
 <ol>
-  <li><span class="btn">새 서버 만들기</span> 탭에서 왼쪽 목록의 모드팩을 눌러요.</li>
+  <li><span class="btn">새 서버 만들기</span> 탭에서 왼쪽 목록의 모드팩을 눌러요. (어떤 걸 고를지 모르겠으면 아래 표의 <b>Better MC</b>)</li>
   <li><b>버전</b>을 골라요. 친구들도 꼭 <b>같은 버전</b>을 설치해야 해요. <code>테스트판</code>이 붙은 버전은 피하세요.</li>
   <li><b>서버 이름</b>은 자동으로 채워져요. 바꾸려면 영어와 숫자로만 쓰세요.</li>
-  <li><b>서버 메모리</b>는 권장값으로 채워져요. 이 컴퓨터에서 게임도 같이 하면 6GB 정도가 적당해요. 나중에 바꿀 수도 있어요(<a href="#ram">7번</a>).</li>
+  <li><b>서버 메모리</b>는 권장값으로 채워져요. 이 컴퓨터에서 게임도 같이 하면 6GB 정도가 적당해요. 나중에 바꿀 수 있어요. <span class="go">→ <a href="#settings">6번 ③</a></span></li>
   <li><b>이용약관(EULA) 동의</b>를 체크하고 <span class="btn">서버 만들기</span>를 눌러요.</li>
-  <li>검은 창이 뜨면서 설치가 진행돼요. 작은 팩은 몇 분, 큰 팩(ATM, Medieval MC)은 10~20분 걸려요. <b>이 검은 창은 닫지 마세요.</b> 초록색으로 <b>완료!</b>가 나오면 Enter를 눌러 닫아요.</li>
+  <li>아래 칸에 진행 상황이 나와요. 작은 팩은 몇 분, 큰 팩(ATM, Medieval MC)은 10~20분 걸려요. <b>"완료!"</b>가 나오면 자동으로 <span class="btn">내 서버</span> 탭으로 넘어가요. <span class="go">→ 다음: <a href="#run">3번</a></span></li>
 </ol>
+<p>만드는 동안 프로그램을 닫으면 중단돼요. 그래도 괜찮아요. 다음에 프로그램을 켜면 끝나지 못한 폴더를 알아서 정리하니까, 같은 이름으로 다시 만들면 돼요.</p>
 <table>
   <tr><th>모드팩</th><th>장르</th><th>마인크래프트</th><th>권장 서버 램</th></tr>
   <tr><td>Medieval MC [FORGE] MMC4</td><td>중세 판타지 RPG</td><td>1.20.1 Forge</td><td>8GB</td></tr>
@@ -105,152 +108,165 @@
   <tr><td>Zombie Invade 100 Days</td><td>좀비 생존</td><td>1.20.1 Forge</td><td>6GB</td></tr>
   <tr><td>Create+</td><td>기계, 공장</td><td>1.21.1 NeoForge</td><td>6GB</td></tr>
 </table>
-<p>모드팩에 섞여 있는 <b>화면 전용 모드</b>(셰이더, 미니맵 등)는 설치할 때 자동으로 빼요. 빠진 모드는 서버 폴더의 <code>_client_only_mods</code>에 모아 둬요.</p>
 
 <h2 id="run">3. 서버 켜고 끄기</h2>
 <ol>
   <li><span class="btn">내 서버</span> 탭 왼쪽 목록에서 서버를 골라요.</li>
-  <li>둘 중 하나를 눌러요. 검은 창 없이 이 프로그램 안에서 켜져요.
+  <li>둘 중 하나를 눌러요.
     <ul>
-      <li><span class="btn">▶ 친구랑 하기</span>: 서버를 열고 Playit도 같이 켜요. 친구들은 Playit 주소로 들어와요.</li>
+      <li><span class="btn">▶ 친구랑 하기</span>: 서버를 열고 Playit도 같이 켜요. 친구들은 Playit 주소로 들어와요. (Playit 연결이 아직이면 <span class="go">→ <a href="#playit">1번</a></span>)</li>
       <li><span class="btn">▶ 혼자 하기</span>: <b>같은 월드</b>를 내 컴퓨터에서만 열어요. 다른 사람은 못 들어와요. 친구랑 하던 월드를 혼자 이어서 할 때 쓰세요.</li>
     </ul></li>
-  <li>위쪽 막대와 글자로 진행 상황이 보여요. <b>초록색으로 "서버 열림!"</b>이 나오면 들어갈 수 있어요. 소리도 한 번 나요.</li>
-  <li>마인크래프트를 켜고 <b>멀티플레이 → 서버 추가</b>에서 주소에 <code>localhost</code>를 넣고 들어가요. (서버를 켠 내 컴퓨터에서는 항상 localhost)</li>
-  <li>끌 때는 <span class="btn">■ 서버 끄기</span>를 누르고 <b>"꺼짐"</b>이 될 때까지 기다려요. 월드를 저장하고 안전하게 꺼져요.</li>
+  <li>위쪽 막대와 글자로 진행 상황과 남은 시간이 보여요. <b>초록색으로 "서버 열림!"</b>이 나오면 다 켜진 거예요. 소리도 한 번 나요.</li>
+  <li>마인크래프트를 켜고 <b>멀티플레이 → 서버 추가</b> → 주소에 <code>localhost</code> → <b>완료</b> → 목록의 서버를 더블클릭해요. (서버를 켠 내 컴퓨터에서는 항상 localhost)<br>
+      "You are not white-listed"가 나오면 <span class="go">→ <a href="#friend">4번 ①</a>에서 내 닉네임을 추가하고 다시 들어가요</span></li>
+  <li>끌 때는 <span class="btn">■ 서버 끄기</span>를 누르고 <b>"꺼짐"</b>이 될 때까지 기다려요.</li>
 </ol>
-<div class="warn">처음 켤 때는 화이트리스트가 비어 있어서 <b>나도 못 들어가요.</b> <span class="btn">친구 추가</span>로 <b>내 닉네임부터</b> 추가하세요(<a href="#friend">4번</a>).</div>
-<ul>
-  <li>서버는 <b>한 번에 하나만</b> 켤 수 있어요. 다른 서버를 켜려면 지금 서버를 먼저 끄세요.</li>
-  <li>서버가 켜진 채로 프로그램 창을 닫으려고 하면 "안전하게 끄고 닫을까요?"라고 물어봐요. <b>예</b>를 누르면 저장하고 꺼진 뒤에 닫혀요.</li>
-</ul>
 <table>
-  <tr><th>상태 표시</th><th>뜻</th></tr>
-  <tr><td><span class="dot" style="background:#808080"></span>꺼짐</td><td>서버가 꺼져 있어요. 모드 추가, 백업, 업데이트 같은 작업을 해도 돼요.</td></tr>
-  <tr><td><span class="dot" style="background:#ff8c00"></span>켜는 중</td><td>모드를 불러오는 중이에요. 처음엔 몇 분 걸려요. 두 번째부터는 지난번 걸린 시간으로 남은 시간을 알려 줘요.</td></tr>
-  <tr><td><span class="dot" style="background:#228b22"></span>서버 열림!</td><td>다 켜졌어요. 들어갈 수 있어요. 오른쪽에 접속 인원이 나와요.</td></tr>
+  <tr><th>상태 표시</th><th>뜻과 할 일</th></tr>
+  <tr><td><span class="dot" style="background:#808080"></span>꺼짐</td><td>서버가 꺼져 있어요. 모드, 설정, 백업, 업데이트를 바꿀 수 있어요.</td></tr>
+  <tr><td><span class="dot" style="background:#ff8c00"></span>켜는 중</td><td>모드를 불러오는 중이에요. 기다리세요. 처음엔 몇 분 걸리고, 다음부터는 남은 시간을 알려 줘요.</td></tr>
+  <tr><td><span class="dot" style="background:#228b22"></span>서버 열림!</td><td>들어갈 수 있어요. 오른쪽에 접속 인원이 나와요.</td></tr>
   <tr><td><span class="dot" style="background:#708090"></span>끄는 중</td><td>월드를 저장하고 있어요. <b>이때 컴퓨터를 끄면 안 돼요.</b></td></tr>
-  <tr><td><span class="dot" style="background:#b22222"></span>켜지다가 멈춤</td><td>오류가 났어요. <a href="#trouble">10번 문제 해결</a>을 보세요.</td></tr>
+  <tr><td><span class="dot" style="background:#b22222"></span>켜지다가 멈춤</td><td>오류가 났어요. <span class="go">→ <a href="#trouble">10번</a></span></td></tr>
 </table>
+<ul>
+  <li>서버는 <b>한 번에 하나만</b> 켤 수 있어요.</li>
+  <li>프로그램이 갑자기 꺼졌거나 정전이 나도 괜찮아요. 다음에 프로그램을 켜면 남아 있는 서버를 찾아서 <b>"안전하게 저장하고 끌까요?"</b>라고 물어봐요.</li>
+  <li>Windows를 종료하면 서버를 자동으로 저장하고 꺼요.</li>
+</ul>
 <h3>명령어 보내기 <span class="st st-on">서버 켜진 상태에서</span></h3>
-<p>아래쪽 칸에 명령어를 입력하고 Enter를 누르면 서버에 보낼 수 있어요. 앞에 <code>/</code>는 안 붙여도 돼요. 대부분은 버튼으로 할 수 있어서 몰라도 괜찮아요.</p>
+<p>아래쪽 칸에 입력하고 Enter. 앞에 <code>/</code>는 안 붙여도 돼요. 대부분은 버튼으로 할 수 있어서 몰라도 괜찮아요.</p>
 <table>
   <tr><th>명령어</th><th>하는 일</th></tr>
-  <tr><td><code>op 닉네임</code></td><td>그 사람에게 관리자 권한 주기 (믿을 수 있는 사람만)</td></tr>
+  <tr><td><code>op 닉네임</code></td><td>관리자 권한 주기 (믿을 수 있는 사람만)</td></tr>
   <tr><td><code>kick 닉네임</code></td><td>내보내기</td></tr>
   <tr><td><code>whitelist remove 닉네임</code></td><td>들어올 수 있는 사람에서 빼기</td></tr>
   <tr><td><code>time set day</code></td><td>낮으로 바꾸기</td></tr>
 </table>
 
 <h2 id="friend">4. 친구 들여보내기</h2>
-<h3>① 화이트리스트에 추가 (방장) <span class="st st-any">언제든지</span></h3>
-<p>서버는 허락한 사람만 들어올 수 있게 되어 있어요. <span class="btn">친구 추가</span>를 누르고 친구의 마인크래프트 닉네임을 입력하세요. <b>나(방장)도 처음 한 번 추가해야 해요.</b></p>
-<ul>
-  <li>서버가 <b>켜져 있으면</b> 바로 추가돼요.</li>
-  <li>서버가 <b>꺼져 있으면</b> 기억해 뒀다가 다음에 서버가 열릴 때 자동으로 추가해요.</li>
-</ul>
-<h3>② 친구 PC 준비 (친구)</h3>
-<p><span class="btn">친구 접속 안내</span>를 누르면 친구에게 보낼 안내문(메모장)이 열려요. 그대로 복사해서 보내 주세요. 내용은 이래요.</p>
+<h3>① 화이트리스트에 추가 <span class="st st-any">언제든지</span></h3>
 <ol>
-  <li><b>CurseForge 앱</b>(curseforge.com/download/app) 또는 <b>Modrinth 앱</b>(modrinth.com/app)을 설치해요.</li>
-  <li>안내문에 적힌 모드팩을 검색해서 <b>같은 버전</b>으로 설치해요.</li>
-  <li>앱 설정에서 <b>메모리(램)</b>를 6~8GB로 올려요. 모드가 많아서 기본값이면 게임이 멈춰요.</li>
-  <li>방장이 모드를 따로 추가했다면, <b>게임을 끈 상태에서</b> <b>친구용_추가모드</b> 폴더의 파일을 모드팩의 <code>mods</code> 폴더에 넣어요. (앱에서 모드팩 오른쪽 위 점 3개 → Open Folder → mods)</li>
-  <li>게임 실행 → <b>멀티플레이 → 서버 추가</b> → 방장이 알려 준 주소(<code>어쩌구.joinmc.link</code>)를 입력해요.</li>
+  <li><span class="btn">친구 추가</span>를 눌러요.</li>
+  <li>닉네임(마인크래프트 자바 계정 이름)을 입력하고 확인을 눌러요. <b>처음엔 내 닉네임부터</b> 넣으세요.</li>
+  <li>서버가 켜져 있으면 바로 추가되고, 꺼져 있으면 다음에 서버가 열릴 때 자동으로 추가돼요.</li>
+</ol>
+<h3>② 친구에게 접속 안내 보내기 <span class="st st-any">언제든지</span></h3>
+<ol>
+  <li><span class="btn">친구 접속 안내</span>를 눌러요.</li>
+  <li><span class="btn">글 전체 복사</span> → 카톡이나 디스코드에 붙여 넣고, <b>Playit 주소(<a href="#playit">1번 ⑥</a>에서 복사한 것)</b>도 같이 보내요.</li>
+  <li>모드를 따로 추가했다면 <span class="btn">친구용 추가모드 폴더 열기</span> → 폴더를 압축해서 같이 보내요.</li>
+</ol>
+<h3>③ 친구가 할 일 (안내 글에 적혀 있어요)</h3>
+<ol>
+  <li><b>CurseForge 앱</b> 또는 <b>Modrinth 앱</b>을 설치해요.</li>
+  <li>안내 글의 모드팩을 검색해서 <b>같은 버전</b>으로 설치해요.</li>
+  <li>앱 설정에서 <b>메모리(램)</b>를 6~8GB로 올려요.</li>
+  <li>추가 모드가 있으면 <b>게임을 끈 상태에서</b> 받은 파일을 모드팩의 <code>mods</code> 폴더에 넣어요. (앱에서 모드팩 오른쪽 위 점 3개 → Open Folder → mods)</li>
+  <li>게임 실행 → <b>멀티플레이 → 서버 추가</b> → 받은 Playit 주소 입력 → 접속.</li>
 </ol>
 
 <h2 id="mods">5. 모드 추가 / 빼기 <span class="st st-off">서버 끈 상태에서</span></h2>
-<p>서버가 켜져 있으면 버튼이 눌리지 않아요. 먼저 <span class="btn">■ 서버 끄기</span>를 하고, <span class="btn">월드 백업</span>도 해 두세요.</p>
 <ol>
+  <li>서버를 끄고 백업해요. <span class="go">→ <a href="#backup">7번 ①</a></span></li>
   <li><span class="btn">모드 추가 / 관리</span>를 눌러요.</li>
-  <li>검색 칸에 모드 이름(영어)을 입력하고 <span class="btn">검색</span>을 눌러요. <b>이 서버의 마인크래프트 버전과 로더에 맞는 모드만</b> 나와요.</li>
-  <li>목록에서 모드를 고르고 <span class="btn">선택한 모드 추가</span>를 눌러요. 필요한 선행 모드도 자동으로 같이 받아요.</li>
-  <li>친구들도 넣어야 하는 파일은 <b>친구용_추가모드</b> 폴더에 모여요. <span class="btn">친구용 추가모드 폴더 열기</span>로 열어서 압축한 뒤 친구들에게 보내 주세요. [친구 접속 안내]에도 자동으로 적혀요.</li>
-  <li>서버를 켜서 <b>서버 열림!</b>까지 가는지 확인해요.</li>
+  <li>검색 칸에 모드 이름(영어)을 넣고 <span class="btn">검색</span>. 이 서버에 맞는 모드만 나와요.</li>
+  <li>모드를 고르고 <span class="btn">선택한 모드 추가</span>. 필요한 선행 모드도 자동으로 같이 받아요.</li>
+  <li>서버를 켜서 "서버 열림!"까지 가는지 확인해요. <span class="go">→ <a href="#run">3번</a></span> (안 켜지면 <span class="go">→ <a href="#trouble">10번</a></span>)</li>
+  <li>친구들에게 추가 모드 파일을 보내요. <span class="go">→ <a href="#friend">4번 ② 의 3</a></span></li>
 </ol>
 <table>
   <tr><th>검색 결과의 "종류"</th><th>어디에 들어가나요</th></tr>
   <tr><td>서버+친구</td><td>서버와 친구 모두 넣어야 해요. 대부분의 모드예요.</td></tr>
   <tr><td>서버 전용</td><td>서버에만 들어가요. 친구들은 안 넣어도 돼요.</td></tr>
-  <tr><td>화면 전용</td><td>미니맵, 셰이더 같은 모드예요. 서버에는 안 넣고 친구용 폴더에만 넣어요. 각자 원하면 넣는 모드예요.</td></tr>
+  <tr><td>화면 전용</td><td>미니맵, 셰이더 같은 모드예요. 서버에는 안 넣고 친구용 폴더에만 넣어요.</td></tr>
 </table>
-<p>Modrinth에 없는 모드는 <span class="btn">내 컴퓨터의 .jar 파일 추가</span>로 넣을 수 있어요. 이때는 마인크래프트 버전과 로더가 맞는지, 선행 모드가 필요한지 직접 확인해야 해요.</p>
-<div class="warn">
-  <ul>
-    <li>한 번에 <b>하나씩</b> 넣고 켜 보세요. 여러 개를 한꺼번에 넣으면 뭐가 문제인지 모르게 돼요.</li>
-    <li>쓰던 모드를 <b>빼면</b> 그 모드의 아이템과 블록이 월드에서 사라져요.</li>
-    <li>새 모드의 광석이나 구조물은 아직 안 가 본 지역에만 생겨요.</li>
-  </ul>
-</div>
+<ul>
+  <li>Modrinth에 없는 모드는 <span class="btn">내 컴퓨터의 .jar 파일 추가</span>로 넣을 수 있어요. 마인크래프트 버전과 로더가 맞는지는 직접 확인해야 해요.</li>
+  <li>한 번에 <b>하나씩</b> 넣고 켜 보세요.</li>
+  <li>쓰던 모드를 <b>빼면</b> 그 모드의 아이템과 블록이 월드에서 사라져요.</li>
+</ul>
 
-<h2 id="update">6. 모드팩 업데이트 <span class="st st-off">서버 끈 상태에서</span></h2>
-<p>서버를 고르면 새 버전이 있는지 자동으로 확인해요. 새 버전이 있으면 왼쪽의 버튼이 <b>노란색 "모드팩 업데이트: 새 버전 있음!"</b>으로 바뀌어요.</p>
-<ol>
-  <li>서버를 끄고 노란 버튼을 눌러요.</li>
-  <li>안내를 읽고 <b>예</b>를 누르면 검은 창에서 업데이트가 진행돼요. <b>이 창은 닫지 마세요.</b></li>
-  <li>끝나면 친구들에게도 <b>모드팩을 같은 새 버전으로 업데이트</b>하라고 알려 주세요.</li>
-</ol>
-<div class="ok">월드, 화이트리스트, 관리자 목록, 서버 설정, 직접 추가한 모드는 그대로 옮겨요. 시작하기 전에 월드를 자동으로 백업하고, 예전 서버는 <code>servers_old</code> 폴더에 그대로 보관해요. 중간에 실패하면 서버는 예전 버전 그대로 남아요.</div>
-<p>마인크래프트 버전 자체가 바뀌는 업데이트(예: 1.20.1 → 1.21.1)는 월드가 망가질 수 있어서 버튼에 나오지 않아요. 그럴 땐 <a href="#make">새 서버</a>로 만드세요.</p>
-
-<h2 id="ram">7. 서버 램(메모리) 바꾸기 <span class="st st-off">서버 끈 상태에서</span></h2>
+<h2 id="settings">6. 서버 설정 바꾸기 <span class="st st-off">서버 끈 상태에서</span></h2>
+<h3>① 난이도, 게임 모드, 최대 인원 등</h3>
 <ol>
   <li>서버를 꺼요.</li>
-  <li><span class="btn">내 서버</span> 탭 오른쪽 위 <b>서버 램(GB)</b> 칸의 숫자를 바꾸고 <span class="btn">램 바꾸기</span>를 눌러요.</li>
-  <li><b>다음에 서버를 켤 때부터</b> 적용돼요.</li>
+  <li><span class="btn">서버 설정 (난이도, 인원 등)</span>을 눌러요.</li>
+  <li>바꾸고 싶은 항목을 고르고 <span class="btn">저장</span>. <b>다음에 켤 때부터</b> 적용돼요. (서버가 켜져 있으면 볼 수만 있고 저장은 막혀 있어요)</li>
 </ol>
-<p>렉이 심하거나 <code>OutOfMemoryError</code>가 나면 1~2GB씩 올려 보세요. 같은 PC에서 게임도 하면 <b>컴퓨터 전체 램의 절반</b>을 넘기지 않는 게 좋아요(게임에도 6~8GB가 필요해요).</p>
+<h3>② 렉이 심할 때</h3>
+<p>①의 창에서 <b>시야 거리</b>와 <b>움직이는 거리</b>를 6~8로 낮춰 보세요. 그래도 심하면 ③으로 가요.</p>
+<h3 id="ram">③ 서버 램(메모리) 바꾸기</h3>
+<ol>
+  <li>서버를 꺼요.</li>
+  <li>오른쪽 위 <b>서버 램(GB)</b> 칸의 숫자를 바꾸고 <span class="btn">램 바꾸기</span>.</li>
+  <li><b>다음에 켤 때부터</b> 적용돼요.</li>
+</ol>
+<p>같은 PC에서 게임도 하면 <b>컴퓨터 전체 램의 절반</b>을 넘기지 않는 게 좋아요(게임에도 6~8GB가 필요해요).</p>
+<h3>④ 모드팩 업데이트</h3>
+<p>새 버전이 나오면 왼쪽 버튼이 <b>노란색 "모드팩 업데이트: 새 버전 있음!"</b>으로 바뀌어요.</p>
+<ol>
+  <li>서버를 끄고 노란 버튼을 눌러요.</li>
+  <li>안내를 읽고 <b>예</b>. 진행 상황은 아래쪽 로그 칸에 나와요.</li>
+  <li>끝나면 친구들에게 <b>모드팩을 같은 새 버전으로 업데이트</b>하라고 알려 주세요. <span class="go">→ <a href="#friend">4번 ②</a></span></li>
+</ol>
+<div class="ok">월드, 화이트리스트, 설정, 직접 추가한 모드는 그대로 옮겨요. 시작 전에 월드를 자동으로 백업하고, 예전 서버는 <code>servers_old</code>에 보관해요. 중간에 끊기면 다음에 프로그램을 켤 때 원래대로 되돌려요.</div>
 
-<h2 id="backup">8. 백업, 다른 PC로 옮기기</h2>
-<h3>월드 백업 <span class="st st-off">서버 끈 상태에서</span></h3>
-<p><span class="btn">월드 백업</span>을 누르면 서버 폴더의 <code>backups</code>에 날짜 이름으로 저장돼요. 일주일에 한 번, 그리고 모드를 바꾸기 전에는 꼭 해 주세요.</p>
-<h3>백업에서 되돌리기 <span class="st st-off">서버 끈 상태에서</span></h3>
+<h2 id="backup">7. 백업과 월드 관리 <span class="st st-off">서버 끈 상태에서</span></h2>
+<p><span class="btn">백업 / 월드 관리</span>를 누르면 아래 기능이 다 있어요.</p>
+<h3>① 지금 백업하기</h3>
+<p><span class="btn">지금 백업하기</span>. 일주일에 한 번, 그리고 모드나 설정을 바꾸기 전에는 꼭 하세요.</p>
+<h3>② 예전으로 되돌리기</h3>
 <ol>
-  <li>서버를 꺼요. <span class="btn">서버 폴더 열기</span>를 눌러요.</li>
-  <li><code>world</code> 폴더 이름을 <code>world_old</code>로 바꿔요.</li>
-  <li><code>backups</code> 폴더의 zip을 오른쪽 클릭 → <b>압축 풀기</b>해서 나온 <code>world</code> 폴더를 서버 폴더에 넣어요.</li>
-  <li>서버를 켜서 확인해요. 잘 되면 <code>world_old</code>는 지워도 돼요.</li>
+  <li>목록에서 돌아가고 싶은 때의 백업을 골라요.</li>
+  <li><span class="btn">선택한 백업으로 되돌리기</span> → <b>예</b>. 지금 월드도 되돌리기 전에 자동으로 백업돼서, 마음이 바뀌면 그걸로 다시 되돌리면 돼요.</li>
 </ol>
-<h3>다른 PC로 옮기기 <span class="st st-off">서버 끄고 프로그램도 닫은 상태에서</span></h3>
+<h3>③ 월드 새로 만들기</h3>
+<p><span class="btn">월드 새로 만들기 (처음부터)</span> → 시드는 모르면 비워 두고 확인. 지금 월드는 자동 백업돼요. 다음에 서버를 켤 때 새 월드가 만들어져요.</p>
+
+<h2 id="move">8. 다른 PC로 옮기기 <span class="st st-off">서버 끄고 프로그램도 닫은 상태에서</span></h2>
 <ol>
-  <li>서버를 끄고 이 프로그램을 닫아요.</li>
-  <li><code>모드팩서버관리.bat</code>이 들어 있는 폴더 <b>전체</b>를 USB나 외장하드로 새 PC에 복사해요. (인터넷에 올려서 옮기지 마세요. 맨 위 주의사항 1번)</li>
-  <li>새 PC에서 <code>모드팩서버관리.bat</code>을 실행해요. Java 설치는 다시 할 필요 없어요.</li>
-  <li>Playit 키는 예전 PC에서만 풀리게 암호화돼 있어서, 새 PC에서는 <span class="btn">Playit 연결 설정</span>에서 <b>키를 한 번 다시</b> 넣어야 해요. (playit.gg에서 키를 새로 만들어도 돼요)</li>
+  <li>서버를 끄고 프로그램을 닫아요.</li>
+  <li><code>모드팩서버관리.exe</code>가 있는 폴더 <b>전체</b>를 USB나 외장하드로 새 PC에 복사해요. (인터넷으로 옮기지 마세요. 맨 위 주의사항 1)</li>
+  <li>새 PC에서 <code>모드팩서버관리.exe</code>를 실행해요.</li>
+  <li>Playit 키는 예전 PC에서만 풀려서, 왼쪽 아래에 "키를 다시 넣어 주세요"가 나와요. <span class="go">→ <a href="#playit">1번 ①~④</a>만 다시 하면 돼요</span> (터널과 주소는 그대로예요)</li>
+  <li>옮긴 다음에는 <b>예전 PC에서 켜지 마세요.</b></li>
 </ol>
-<ul>
-  <li>64비트 Windows에서만 돼요.</li>
-  <li>옮긴 다음에는 <b>예전 PC에서 켜지 마세요.</b> 항상 마지막에 플레이한 폴더 하나만 쓰세요.</li>
-</ul>
 
 <h2 id="security">9. 보안 <span class="st st-any">언제든지</span></h2>
-<p>서버를 켤 때마다 안전한 설정(정품 인증, 화이트리스트, 원격 관리 끄기, 내 PC 안에서만 접속 받기)을 <b>자동으로 맞춰요.</b> 따로 할 일은 없어요. <span class="btn">보안 점검</span>을 누르면 상태와 디도스(DDoS) 대처법을 볼 수 있어요.</p>
-<ul>
-  <li>Playit 비밀 키는 이 PC에서만 풀리게 암호화해서 저장해요.</li>
-  <li>프로그램은 켤 때 새 버전이 있으면 자동으로 업데이트해요. 업데이트 파일은 개발자의 디지털 서명이 맞을 때만 설치해서, 가짜 업데이트는 설치되지 않아요.</li>
-</ul>
+<p>서버를 켤 때마다 안전한 설정(정품 인증, 화이트리스트, 원격 관리 끄기, 내 PC 안에서만 접속 받기)을 <b>자동으로 맞춰요.</b> 따로 할 일은 없어요. 상태는 <span class="btn">보안 점검</span>에서 볼 수 있어요.</p>
 <ul>
   <li>친구들에게는 <b>Playit 주소만</b> 알려 주세요. 우리 집 IP 주소는 알려 주지 마세요.</li>
-  <li>공유기 <b>포트포워딩은 하지 마세요.</b> Playit을 쓰면 필요 없고, 하면 집 IP가 드러나요.</li>
-  <li>공격을 받는 것 같으면(갑자기 렉, 접속 끊김) playit.gg에서 터널을 지우고 새로 만드세요. 주소가 바뀌어서 공격이 끊겨요.</li>
-  <li>처음 서버를 켤 때 Windows 방화벽 허용 창이 뜨면 <b>[취소]</b>를 눌러도 돼요. Playit은 방화벽을 열지 않아도 동작해요.</li>
-  <li>모드는 Modrinth, CurseForge 공식 사이트에서만 받으세요. 출처 모를 .jar 파일에는 악성코드가 있을 수 있어요.</li>
+  <li>공유기 <b>포트포워딩은 하지 마세요.</b> 필요 없고, 하면 집 IP가 드러나요.</li>
+  <li>처음 서버를 켤 때 Windows 방화벽 창이 뜨면 <b>[취소]</b>를 눌러도 돼요.</li>
+  <li>모드는 Modrinth, CurseForge 공식 사이트에서만 받으세요.</li>
+  <li>프로그램은 켤 때 새 버전이 있으면 자동으로 업데이트해요. 개발자의 디지털 서명이 맞는 파일만 설치해요.</li>
 </ul>
+<h3 id="ddos">공격(디도스)을 받는 것 같을 때 (갑자기 렉, 다들 접속이 끊김)</h3>
+<ol>
+  <li><span class="btn">■ 서버 끄기</span> → "꺼짐"이 될 때까지 기다려요.</li>
+  <li><span class="btn">보안 점검</span> → <span class="btn">playit.gg 터널 페이지 열기</span> → 지금 쓰던 터널을 지워요(Delete).</li>
+  <li><span class="go">→ <a href="#playit-tunnel">1번 ⑤단계</a>로 가서 터널을 새로 만들어요.</span> 새 주소가 생겨요.</li>
+  <li><span class="go">→ <a href="#friend">4번 ②</a>로 가서 믿는 친구에게만 새 주소를 보내요.</span></li>
+  <li><span class="btn">▶ 친구랑 하기</span>로 다시 켜요. 예전 주소는 없어졌으니 공격이 더는 닿지 않아요.</li>
+</ol>
 
 <h2 id="trouble">10. 문제 해결</h2>
 <table>
   <tr><th>이런 일이 생기면</th><th>이렇게 하세요</th></tr>
   <tr><td>로그에 빨간 글씨나 ERROR가 많아요</td><td>모드가 많으면 원래 그래요. "서버 열림!"까지 가면 정상이에요.</td></tr>
-  <tr><td>"켜지다가 멈췄어요"가 떠요</td><td>원인 모드를 찾으면 "이 모드를 빼고 다시 켤까요?"라고 물어봐요. 보통 화면 전용 모드 때문이라 <b>예</b>를 누르면 돼요.</td></tr>
-  <tr><td>"다른 서버가 이미 켜져 있어요"</td><td>서버는 한 번에 하나만 켤 수 있어요. 켜져 있는 서버를 먼저 끄세요. 예전에 <code>서버켜기.bat</code>(검은 창)으로 켠 서버가 있다면 그 창에 <code>stop</code>을 입력해서 끄세요.</td></tr>
-  <tr><td>나도 못 들어가요</td><td><span class="btn">친구 추가</span>로 내 닉네임을 추가했는지 확인해요. 주소는 <code>localhost</code>예요.</td></tr>
-  <tr><td>친구가 접속을 못 해요</td><td>① 상태가 "서버 열림!"인지 ② <span class="btn">▶ 친구랑 하기</span>로 켰는지(혼자 하기 X) ③ 왼쪽 아래가 "Playit: 실행 중"인지 ④ 친구가 주소를 맞게 넣었는지 ⑤ 화이트리스트에 추가했는지 확인해요.</td></tr>
-  <tr><td>"You are not white-listed"</td><td><span class="btn">친구 추가</span>로 그 사람의 닉네임을 추가해요.</td></tr>
-  <tr><td>"Mod rejections", "mismatched mods"</td><td>친구의 모드팩 버전이나 추가 모드가 서버와 달라요. 같은 버전인지, 친구용_추가모드를 다 넣었는지 확인해요.</td></tr>
-  <tr><td>렉이 심하거나 OutOfMemoryError</td><td><a href="#ram">7번</a>처럼 서버를 끄고 램을 올려요.</td></tr>
-  <tr><td>서버 만들기나 업데이트가 실패했어요</td><td>인터넷 연결을 확인하고 다시 해 보세요. 실패한 폴더는 자동으로 지워지고, 업데이트 실패 때는 서버가 예전 그대로예요. 기록은 <code>_program\logs</code>에 남아요.</td></tr>
-  <tr><td>서버 설정(난이도, 최대 인원 등)을 바꾸고 싶어요</td><td><b>서버를 끈 상태에서</b> 서버 폴더의 <code>server.properties</code>를 메모장으로 열어 고치고 저장해요. 켜져 있을 때 고치면 꺼질 때 원래대로 돌아갈 수 있어요.</td></tr>
-  <tr><td>그래도 모르겠어요</td><td>서버 폴더의 <code>logs\latest.log</code>나 <code>crash-reports</code> 폴더의 최신 파일을 도와줄 사람에게 보여 주세요.</td></tr>
+  <tr><td>"켜지다가 멈췄어요"</td><td>화면 전용 모드 때문이면 "이 모드를 빼고 다시 켤까요?"라고 물어봐요 → <b>예</b>.<br>메모리 문제면 위쪽 글에 나온 대로 <span class="go">→ <a href="#ram">6번 ③</a>에서 램을 바꾸고 다시 켜요</span>.<br>그 밖의 경우 <span class="btn">서버 폴더 열기</span> → <code>crash-reports</code>의 최신 파일을 도와줄 사람에게 보여 주세요.</td></tr>
+  <tr><td>"다른 서버가 이미 켜져 있어요"</td><td>서버는 한 번에 하나만 켤 수 있어요. 켜져 있는 서버를 먼저 끄세요. 이 프로그램 밖에서 켜진 서버라면 프로그램을 닫았다가 다시 켜면 찾아서 꺼 줘요.</td></tr>
+  <tr><td>"서버가 켜져 있어서 지금은 할 수 없어요"</td><td><span class="btn">■ 서버 끄기</span> → "꺼짐"이 된 뒤 다시 눌러요.</td></tr>
+  <tr><td>나도 못 들어가요 / "You are not white-listed"</td><td><span class="go">→ <a href="#friend">4번 ①</a>에서 닉네임 추가</span>. 내 컴퓨터에서는 주소가 <code>localhost</code>예요.</td></tr>
+  <tr><td>친구가 접속을 못 해요</td><td>차례대로 확인해요. ① 상태가 "서버 열림!"인가 ② <span class="btn">▶ 친구랑 하기</span>로 켰나(혼자 하기 X) ③ 왼쪽 아래가 "Playit: 실행 중"인가 (아니면 <span class="go">→ <a href="#playit">1번</a></span>) ④ 친구가 주소를 맞게 넣었나 ⑤ 친구 닉네임을 추가했나 (<span class="go">→ <a href="#friend">4번 ①</a></span>)</td></tr>
+  <tr><td>"Mod rejections", "mismatched mods"</td><td>친구의 모드팩 버전이나 추가 모드가 서버와 달라요. <span class="go">→ <a href="#friend">4번 ③</a>을 친구와 같이 다시 확인해요.</span></td></tr>
+  <tr><td>렉이 심해요</td><td><span class="go">→ <a href="#settings">6번 ②</a></span></td></tr>
+  <tr><td>"디스크 공간이 모자라요"</td><td>나온 숫자만큼 그 드라이브의 공간을 비우고 다시 만들어요. 다 쓴 서버는 <code>servers_old</code> 폴더나 오래된 백업을 지우면 공간이 많이 생겨요.</td></tr>
+  <tr><td>서버 만들기나 업데이트가 실패했어요</td><td>인터넷 연결을 확인하고 같은 이름으로 다시 해 보세요. 실패한 폴더는 자동으로 정리되고, 업데이트 실패 때는 서버가 예전 그대로예요.</td></tr>
+  <tr><td>"프로그램이 이미 열려 있어요"</td><td>작업 표시줄에서 이미 열린 창을 찾아 주세요. 프로그램은 한 번에 하나만 열려요.</td></tr>
+  <tr><td>"문제가 생겼어요" 창이 떠요</td><td>내용을 캡처해서 도와줄 사람에게 보내 주세요. 기록은 <code>_program\logs\manager-errors.txt</code>에 남아요.</td></tr>
 </table>
 
 </body>

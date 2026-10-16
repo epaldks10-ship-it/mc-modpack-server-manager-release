@@ -1,15 +1,15 @@
 {
-    "version":  "1.0.1",
+    "version":  "1.0.2",
     "date":  "2026-10-16",
-    "notes":  "Playit 비밀 키를 이 PC에서만 풀리게 암호화해요. 서버가 내 PC 안에서만 접속을 받아서 더 안전해졌어요.",
+    "notes":  "검은 창 없이 프로그램 안에서 모든 작업을 해요. 서버 설정, 백업/되돌리기, 월드 새로 만들기 기능이 생겼고, 프로그램이 갑자기 꺼져도 서버를 안전하게 정리해요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "88f90dc4a3d4c89e1af04b4ac870572fa41633070daa1be6a25d9554b324de15"
+                      "sha256":  "958b9920ea0491db6e45c351286dcc0043d201f48ddd748a55fe22bcbc8b6837"
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "17d3fe4b7b9f97c87f241bebec5bdb9857bbf248c1b746dae7f8baad7cabfa42"
+                      "sha256":  "bf765dea9d81fad23c7da1b2d84f0b4965b29595cdfa28839a0e5063a3905411"
                   },
                   {
                       "path":  "packs.json",
@@ -21,11 +21,11 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "f87b293d5a5d9251e3503455b85dea0c8c96a601d8962e219d6eddbcc6e416f8"
+                      "sha256":  "1a9beb3fe65bb32e32b4fede67232ef68089c8d0569cf93765d23c609b0148e4"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "d51e6ec94058554a84558a5b402ee6ef5fdf5455e35c902feda61cda8752943a"
+                      "sha256":  "bfec2e34583ada7e6af2cb73993fb75a3f7147a6c943e5ff5f5c4294fc577b90"
                   }
               ]
 }

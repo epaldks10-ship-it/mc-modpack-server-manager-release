@@ -1,12 +1,45 @@
-﻿# Modpack server manager GUI. Started by 모드팩서버관리.bat in the package root.
-# Tabs: new server (install.ps1 in a console), my servers (server runs inside this window), manual (manual.html).
+﻿# Modpack server manager GUI. Started by 모드팩서버관리.exe in the package root, which runs it without a console window.
+# Tabs: my servers (the server runs inside this window), new server (install.ps1 runs hidden, output shown here), manual.
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [Windows.Forms.Application]::EnableVisualStyles()
-# The console is hidden, so surface startup errors in a dialog
-trap { [void][Windows.Forms.MessageBox]::Show("프로그램 오류: $($_.Exception.Message)", '모드팩 서버 관리', 'OK', 'Error'); exit 1 }
+# There is no console, so every error has to reach the user as a dialog (and a log line for whoever helps them)
+$ErrLog = Join-Path $PSScriptRoot 'logs\manager-errors.txt'
+function Write-ErrLog($msg) {
+    try { New-Item -ItemType Directory -Force (Split-Path $ErrLog -Parent) | Out-Null; Add-Content -LiteralPath $ErrLog -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $msg" -Encoding UTF8 } catch { }
+}
+function Show-Msg($text, $icon = 'Information') { [void][Windows.Forms.MessageBox]::Show($text, '모드팩 서버 관리', 'OK', $icon) }
+trap { Write-ErrLog "$($_.Exception.Message) $($_.ScriptStackTrace)"; Show-Msg "프로그램 오류: $($_.Exception.Message)" 'Error'; exit 1 }
+# Errors inside button handlers would otherwise vanish and the button would just seem dead
+[Windows.Forms.Application]::SetUnhandledExceptionMode('CatchException')
+[Windows.Forms.Application]::add_ThreadException({
+        param($s, $e)
+        Write-ErrLog "$($e.Exception.Message) $($e.Exception.StackTrace)"
+        Show-Msg "문제가 생겼어요: $($e.Exception.Message)`n`n(기록: _program\logs\manager-errors.txt)" 'Error'
+    })
+
+# One window at a time: a second copy would mistake the first one's server for a leftover and try to stop it
+$mutexName = 'Local\mcsm-' + ([BitConverter]::ToString((New-Object Security.Cryptography.SHA1Managed).ComputeHash([Text.Encoding]::UTF8.GetBytes($PSScriptRoot.ToLower()))) -replace '-', '').Substring(0, 16)
+$created = $false
+$script:instanceMutex = New-Object Threading.Mutex($true, $mutexName, [ref]$created)
+if (-not $created) {
+    [void][Windows.Forms.MessageBox]::Show("모드팩 서버 관리 프로그램이 이미 열려 있어요.`n작업 표시줄에서 열려 있는 창을 찾아 주세요.", '모드팩 서버 관리', 'OK', 'Information')
+    exit 0
+}
+
+function Invoke-Api([string]$Url, [int]$TimeoutSec = 20, [string]$Method = 'Get', $Body = $null) {
+    # Every web call gets a time limit, so a slow connection can't freeze the window for minutes.
+    # Piping through ForEach-Object unrolls JSON arrays, which Windows PowerShell 5.1 otherwise hands over as one object.
+    if ($Body) { return (Invoke-RestMethod -Uri $Url -Method $Method -TimeoutSec $TimeoutSec -ContentType 'application/json' -Body $Body | ForEach-Object { $_ }) }
+    return (Invoke-RestMethod -Uri $Url -Method $Method -TimeoutSec $TimeoutSec | ForEach-Object { $_ })
+}
+function Get-WebBytes([string]$Url, [int]$TimeoutMs = 8000) {
+    $req = [Net.HttpWebRequest]::Create($Url); $req.Timeout = $TimeoutMs; $req.ReadWriteTimeout = $TimeoutMs
+    $resp = $req.GetResponse()
+    try { $ms = New-Object IO.MemoryStream; $resp.GetResponseStream().CopyTo($ms); return , $ms.ToArray() } finally { $resp.Close() }
+}
 
 # Runs a console program without a window and collects its output on background threads.
 # PowerShell script blocks can't run on those threads, so the UI timer drains the queue instead.
@@ -68,12 +101,13 @@ $UpdatePublicKey = '<RSAKeyValue><Modulus>wXz1yU+YDIoKe4S680x7saNhbFzm4qbt3MF2up
 function Invoke-SelfUpdate {
     # Returns $true when newer program files were installed and the manager should restart
     if ($env:MCSM_NO_UPDATE) { return $false }
-    $wc = New-Object Net.WebClient
     try {
-        $bytes = $wc.DownloadData("$UpdateBase/version.json")
-        $sig = [Convert]::FromBase64String(([Text.Encoding]::ASCII.GetString($wc.DownloadData("$UpdateBase/version.json.sig"))).Trim())
+        # Short time limit: an offline PC should open the program right away, not after a long wait
+        $bytes = Get-WebBytes "$UpdateBase/version.json" 5000
+        $sig = [Convert]::FromBase64String(([Text.Encoding]::ASCII.GetString((Get-WebBytes "$UpdateBase/version.json.sig" 5000))).Trim())
     }
     catch { return $false }   # offline or nothing released yet: run as is
+    $wc = New-Object Net.WebClient
     $rsa = New-Object Security.Cryptography.RSACryptoServiceProvider
     $rsa.FromXmlString($UpdatePublicKey)
     if (-not $rsa.VerifyData($bytes, 'SHA256', $sig)) { return $false }   # not signed by us: ignore it
@@ -89,11 +123,16 @@ function Invoke-SelfUpdate {
         if ((Get-FileHash -LiteralPath $dst -Algorithm SHA256).Hash -ne ([string]$f.sha256).ToUpper()) { return $false }
     }
     foreach ($f in $remote.files) { Copy-Item -LiteralPath (Join-Path $stage $f.path) -Destination (Join-Path $Prog $f.path) -Force }
+    Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
     [IO.File]::WriteAllText((Join-Path $Prog 'updated-notice.txt'), "$AppVersion → $($remote.version)`r`n`r`n$($remote.notes)", $Utf8)
     return $true
 }
 if (Invoke-SelfUpdate) {
-    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $Prog 'manager.ps1')`""
+    # Restart through the launcher so the new version also opens without a console window
+    $script:instanceMutex.ReleaseMutex(); $script:instanceMutex.Dispose()
+    $exe = Join-Path $Root '모드팩서버관리.exe'
+    if (Test-Path -LiteralPath $exe) { Start-Process -FilePath $exe }
+    else { Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $Prog 'manager.ps1')`"" }
     exit 0
 }
 
@@ -112,7 +151,6 @@ function New-Ctl($type, $x, $y, $w, $h, $text = '') {
     return $c
 }
 function Open-Url($u) { Start-Process $u }
-function Show-Msg($text, $icon = 'Information') { [void][Windows.Forms.MessageBox]::Show($text, '모드팩 서버 관리', 'OK', $icon) }
 function Ask-YesNo($text) { return [Windows.Forms.MessageBox]::Show($text, '모드팩 서버 관리', 'YesNo', 'Question') -eq 'Yes' }
 function Ask-Text($prompt, $default = '') { return [Microsoft.VisualBasic.Interaction]::InputBox($prompt, '모드팩 서버 관리', $default) }
 function Pump($ms) { $sw = [Diagnostics.Stopwatch]::StartNew(); while ($sw.ElapsedMilliseconds -lt $ms) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 30 } }
@@ -167,12 +205,15 @@ $lblRamHint = New-Ctl Label 410 352 540 40 '이 컴퓨터에서 게임도 같이
 $chkEula = New-Ctl CheckBox 320 400 420 26 '마인크래프트 이용약관(EULA)에 동의합니다'
 $lnkEula = New-Ctl LinkLabel 745 404 150 22 '약관 보기'
 
-$btnInstall = New-Ctl Button 320 445 260 48 '서버 만들기'
+$btnInstall = New-Ctl Button 320 440 260 48 '서버 만들기'
 $btnInstall.Font = $bold
-$lblWork = New-Ctl Label 595 450 360 60 ''; $lblWork.ForeColor = [Drawing.Color]::DarkGreen
+$lblWork = New-Ctl Label 595 440 360 50 ''; $lblWork.ForeColor = [Drawing.Color]::DarkGreen
+$txtInstallLog = New-Ctl TextBox 320 497 630 118
+$txtInstallLog.Multiline = $true; $txtInstallLog.ReadOnly = $true; $txtInstallLog.ScrollBars = 'Vertical'; $txtInstallLog.Font = $mono
+$txtInstallLog.BackColor = [Drawing.Color]::White
 
 $tabNew.Controls.AddRange(@($lblPick, $lstPacks, $lblName, $lblDesc, $lblInfo, $lnkPage, $lblVer, $cmbVer, $lblSrv, $txtName,
-        $lblRam, $numRam, $lblRamHint, $chkEula, $lnkEula, $btnInstall, $lblWork))
+        $lblRam, $numRam, $lblRamHint, $chkEula, $lnkEula, $btnInstall, $lblWork, $txtInstallLog))
 
 $script:versions = @()
 
@@ -198,7 +239,7 @@ function Get-Versions($p) {
     if ($p.source -eq 'curseforge') {
         return @($p.versions | ForEach-Object { [pscustomobject]@{ key = $_.label; label = $_.label; text = "$($_.label)   (마크 $($p.mc), $($_.date), $([math]::Round($_.size / 1GB, 1))GB)" } })
     }
-    $vs = Invoke-RestMethod "https://api.modrinth.com/v2/project/$($p.slug)/version"
+    $vs = @(Invoke-Api "https://api.modrinth.com/v2/project/$($p.slug)/version")
     return @($vs | Where-Object { ($_.loaders | Where-Object { $_ -in 'forge', 'neoforge', 'fabric' }) -and ($_.game_versions | Where-Object { $_ -notmatch '^1\.(1[0-6]|[0-9])(\.|$)' }) } |
         Select-Object -First 20 | ForEach-Object {
             $tag = ''; if ($_.version_type -ne 'release') { $tag = " [$($_.version_type) 테스트판]" }
@@ -228,36 +269,60 @@ $cmbVer.Add_SelectedIndexChanged({
 $lnkPage.Add_LinkClicked({ if ($lstPacks.SelectedIndex -ge 0) { Open-Url $packs[$lstPacks.SelectedIndex].page } })
 $lnkEula.Add_LinkClicked({ Open-Url 'https://aka.ms/MinecraftEULA' })
 
-$script:installProc = $null
+$script:installProc = $null   # McProc running install.ps1 without any window
 $script:statusFile = ''
-$installTimer = New-Object Windows.Forms.Timer; $installTimer.Interval = 1500
+$script:installLast = ''
+$installTimer = New-Object Windows.Forms.Timer; $installTimer.Interval = 400
 $installTimer.Add_Tick({
-        # The console stays open until the user presses Enter; the status file says when the work is done
-        $done = (Test-Path $script:statusFile) -or ($script:installProc -and $script:installProc.HasExited)
-        if ($script:installProc -and $done) {
-            $installTimer.Stop()
-            $ok = (Test-Path $script:statusFile) -and ((Get-Content $script:statusFile -Raw).Trim() -eq 'ok')
-            Remove-Item $script:statusFile -ErrorAction SilentlyContinue
-            $script:installProc = $null
-            $btnInstall.Enabled = $true
-            if (-not $script:srv) { $btnStart.Enabled = $true; $btnLocal.Enabled = $true }
-            $script:updCache = @{}
-            if ($script:jobKind -eq 'update') {
-                if ($ok) { $lblStage.Text = '모드팩 업데이트가 끝났어요. 친구들에게도 새 버전으로 업데이트하라고 알려 주세요.'; $lblWork.Text = '' }
-                else { $lblStage.Text = '업데이트에 실패했어요. 서버는 예전 버전 그대로예요. 검은 창의 안내를 확인하세요.' }
-                Update-Servers; Show-SrvInfo
-            }
-            elseif ($ok) { $lblWork.ForeColor = [Drawing.Color]::DarkGreen; $lblWork.Text = '완료! [내 서버] 탭을 확인하세요.'; Update-Servers; $tabs.SelectedTab = $tabMy }
-            else { $lblWork.Text = '설치에 실패했어요. 검은 창의 안내를 확인하세요.'; $lblWork.ForeColor = [Drawing.Color]::Firebrick }
+        $p = $script:installProc; if (-not $p) { return }
+        $sb = New-Object Text.StringBuilder; $line = $null
+        while ($p.Lines.TryDequeue([ref]$line)) {
+            $t = $line.TrimEnd()
+            if (-not $t.Trim()) { continue }
+            [void]$sb.Append($t).Append("`r`n"); $script:installLast = $t.Trim()
+            # The reason, not whatever footer line came last, is what the user needs to see
+            if ($t -match '설치 실패:\s*(.+)$') { $script:installErr = $Matches[1].Trim() }
         }
+        if ($sb.Length) {
+            $txtInstallLog.AppendText($sb.ToString())
+            if ($script:jobKind -eq 'update') { $txtConsole.AppendText($sb.ToString()) }
+        }
+        $head = '설치 중이에요. 프로그램을 닫지 마세요.'; if ($script:jobKind -eq 'update') { $head = '모드팩 업데이트 중이에요. 프로그램을 닫지 마세요.' }
+        if ($p.Running) {
+            $lblWork.Text = "$head`n$($script:installLast)"
+            if ($script:jobKind -eq 'update') { $lblStage.Text = "$head  $($script:installLast)" }
+            return
+        }
+        if (-not $p.Lines.IsEmpty) { return }
+        $installTimer.Stop()
+        $ok = (Test-Path $script:statusFile) -and ((Get-Content $script:statusFile -Raw).Trim() -eq 'ok')
+        Remove-Item $script:statusFile -ErrorAction SilentlyContinue
+        $script:installProc = $null
+        $btnInstall.Enabled = $true
+        if (-not $script:srv) { $btnStart.Enabled = $true; $btnLocal.Enabled = $true }
+        $script:updCache = @{}
+        if ($script:jobKind -eq 'update') {
+            if ($ok) { $lblStage.Text = '모드팩 업데이트가 끝났어요. 친구들에게도 새 버전으로 업데이트하라고 알려 주세요.'; $lblWork.Text = '' }
+            else { $lblStage.Text = "업데이트에 실패했어요. 서버는 예전 버전 그대로예요. 이유: $($script:installErr)" }
+            Update-Servers; Show-SrvInfo
+        }
+        elseif ($ok) { $lblWork.ForeColor = [Drawing.Color]::DarkGreen; $lblWork.Text = '완료! [내 서버] 탭을 확인하세요.'; Update-Servers; $tabs.SelectedTab = $tabMy }
+        else { $lblWork.ForeColor = [Drawing.Color]::Firebrick; $lblWork.Text = "설치에 실패했어요. 이유: $($script:installErr)`n인터넷을 확인하고 같은 이름으로 다시 해 보세요." }
     })
+function Stop-InstallJob {
+    # Ends install.ps1 together with the curl / Java installer it started; the leftover folder is cleaned on next start
+    $p = $script:installProc; if (-not $p) { return }
+    & taskkill.exe /T /F /PID $p.P.Id 2>$null | Out-Null
+    $script:installProc = $null; $installTimer.Stop()
+}
 
 $btnInstall.Add_Click({
         if ($lstPacks.SelectedIndex -lt 0) { Show-Msg '먼저 왼쪽에서 모드팩을 고르세요.'; return }
         if ($cmbVer.SelectedIndex -lt 0 -or -not $script:versions.Count) { Show-Msg '버전을 고르세요.'; return }
         $name = $txtName.Text.Trim()
         if (-not (Test-ServerName $name)) { Show-Msg "서버 이름은 영어, 숫자, 띄어쓰기, - _ . 만 쓸 수 있어요.`n(점으로 끝나거나 CON, NUL 같은 Windows 예약어는 안 돼요)"; return }
-        if (Test-Path -LiteralPath (Join-Path $ServersDir $name)) { Show-Msg "'$name' 서버가 이미 있어요. 다른 이름을 써 주세요."; return }
+        $target = Join-Path $ServersDir $name
+        if ((Test-Path -LiteralPath $target) -and -not (Test-Path -LiteralPath (Join-Path $target '.installing'))) { Show-Msg "'$name' 서버가 이미 있어요. 다른 이름을 써 주세요."; return }
         if (-not $chkEula.Checked) {
             if (-not (Ask-YesNo "이용약관(EULA)에 동의하지 않으면 서버가 켜지지 않아요.`n그래도 계속할까요?")) { return }
         }
@@ -268,16 +333,16 @@ $btnInstall.Add_Click({
     })
 
 function Start-InstallJob([string]$installArgs, [string]$kind) {
-    # install.ps1 runs in its own console (long downloads, readable progress); a status file reports the result
+    # install.ps1 runs hidden inside this program; its output shows in the log box and a status file reports the result
     if ($script:installProc) { Show-Msg '다른 설치나 업데이트가 진행 중이에요. 끝난 다음에 해 주세요.'; return }
-    $script:jobKind = $kind
+    $script:jobKind = $kind; $script:installLast = ''; $script:installErr = '(아래 기록을 확인하세요)'
     $script:statusFile = Join-Path $env:TEMP "mcserver-install-$([guid]::NewGuid().ToString('N')).txt"
-    $argLine = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $Prog 'install.ps1')`" $installArgs -StatusFile `"$script:statusFile`""
-    $script:installProc = Start-Process powershell.exe -ArgumentList $argLine -PassThru
+    $argLine = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $Prog 'install.ps1')`" $installArgs -StatusFile `"$script:statusFile`" -NoPause"
+    $txtInstallLog.Clear()
+    if ($kind -eq 'update') { $txtConsole.Clear() }
+    $script:installProc = New-Object McProc('powershell.exe', $argLine, $Prog, [Text.Encoding]::Default.CodePage)
     $btnInstall.Enabled = $false; $btnUpdate.Enabled = $false; $btnStart.Enabled = $false; $btnLocal.Enabled = $false
-    $msg = "설치 중... 검은 창을 닫지 마세요.`n큰 모드팩은 10분 넘게 걸려요."
-    if ($kind -eq 'update') { $msg = '모드팩 업데이트 중... 검은 창을 닫지 마세요. 큰 모드팩은 10분 넘게 걸려요.'; $lblStage.Text = $msg }
-    $lblWork.ForeColor = [Drawing.Color]::DarkGreen; $lblWork.Text = $msg
+    $lblWork.ForeColor = [Drawing.Color]::DarkGreen; $lblWork.Text = '준비 중...'
     $installTimer.Start()
 }
 
@@ -294,7 +359,7 @@ function Get-UpdateTarget($i) {
             if ($p.mc -eq $i.mc) { $list = @($p.versions | ForEach-Object { @{ key = $_.label; label = $_.label } }) }
         }
         else {
-            $vs = @(Invoke-RestMethod "https://api.modrinth.com/v2/project/$($p.slug)/version" | ForEach-Object { $_ })
+            $vs = @(Invoke-Api "https://api.modrinth.com/v2/project/$($p.slug)/version" | ForEach-Object { $_ })
             $list = @($vs | Where-Object { $_.game_versions -contains $i.mc -and $_.loaders -contains $i.loader -and $_.version_type -eq 'release' } | ForEach-Object { @{ key = $_.id; label = $_.version_number } })
         }
         $script:updCache[$ck] = $list   # newest first
@@ -318,7 +383,7 @@ function Update-UpdateButton {
 }
 function Start-PackUpdate {
     $d = Get-SelDir; $t = $btnUpdate.Tag; if (-not $d -or -not $t) { return }
-    if ($script:srv) { Show-Msg '서버를 끈 다음에 업데이트하세요.'; return }
+    if (-not (Assert-ServerOff $d)) { return }
     $i = Read-Json (Join-Path $d 'server-info.json')
     $name = $lstSrv.SelectedItem
     $q = "'$name' 서버의 모드팩을 $($i.version) → $($t.label) 로 업데이트할까요?`n`n" +
@@ -333,15 +398,16 @@ function Start-PackUpdate {
 # Tab: my servers (server console lives here)
 # =====================================================================================
 $lblMy = New-Ctl Label 10 10 230 22 '만들어 둔 서버'
-$lstSrv = New-Ctl ListBox 10 35 235 230
-$btnFolder = New-Ctl Button 10 272 235 34 '서버 폴더 열기'
-$btnMods = New-Ctl Button 10 310 235 34 '모드 추가 / 관리'
-$btnFriend = New-Ctl Button 10 348 235 34 '친구 접속 안내'
-$btnBackup = New-Ctl Button 10 386 235 34 '월드 백업'
-$btnPlayit = New-Ctl Button 10 424 235 34 'Playit 연결 설정'
-$btnSecurity = New-Ctl Button 10 462 235 34 '보안 점검'
-$btnUpdate = New-Ctl Button 10 500 235 34 '모드팩 업데이트 확인'
-$lblPlayit = New-Ctl Label 10 542 235 80 ''
+$lstSrv = New-Ctl ListBox 10 35 235 190
+$btnSettings = New-Ctl Button 10 232 235 34 '서버 설정 (난이도, 인원 등)'
+$btnMods = New-Ctl Button 10 270 235 34 '모드 추가 / 관리'
+$btnBackup = New-Ctl Button 10 308 235 34 '백업 / 월드 관리'
+$btnFriend = New-Ctl Button 10 346 235 34 '친구 접속 안내'
+$btnPlayit = New-Ctl Button 10 384 235 34 'Playit 연결 설정'
+$btnSecurity = New-Ctl Button 10 422 235 34 '보안 점검'
+$btnUpdate = New-Ctl Button 10 460 235 34 '모드팩 업데이트 확인'
+$btnFolder = New-Ctl Button 10 498 235 34 '서버 폴더 열기'
+$lblPlayit = New-Ctl Label 10 540 235 78 ''
 
 $lblState = New-Ctl Label 260 35 695 48 '● 꺼짐'
 $lblState.Font = $big; $lblState.ForeColor = [Drawing.Color]::White; $lblState.BackColor = [Drawing.Color]::Gray; $lblState.TextAlign = 'MiddleLeft'
@@ -365,13 +431,15 @@ $txtConsole.Multiline = $true; $txtConsole.ReadOnly = $true; $txtConsole.ScrollB
 $txtConsole.Font = $mono; $txtConsole.BackColor = [Drawing.Color]::FromArgb(24, 24, 24); $txtConsole.ForeColor = [Drawing.Color]::Gainsboro
 $txtCmd = New-Ctl TextBox 260 580 590 28
 $btnSend = New-Ctl Button 856 578 99 32 '명령 보내기'
-$tabMy.Controls.AddRange(@($lblMy, $lstSrv, $btnFolder, $btnMods, $btnFriend, $btnBackup, $btnPlayit, $btnSecurity, $btnUpdate, $lblPlayit,
+$tabMy.Controls.AddRange(@($lblMy, $lstSrv, $btnSettings, $btnFolder, $btnMods, $btnFriend, $btnBackup, $btnPlayit, $btnSecurity, $btnUpdate, $lblPlayit,
         $lblState, $prg, $lblStage, $lblSrvInfo, $lblRamSrv, $numRamSrv, $btnRamSrv, $btnStart, $btnLocal, $btnStop, $btnAddFriend, $lblPlayers, $txtConsole, $txtCmd, $btnSend))
 
 function Update-Servers {
     $keep = $lstSrv.SelectedItem
     $lstSrv.Items.Clear()
-    Get-ChildItem -LiteralPath $ServersDir -Directory | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName '서버켜기.bat') } | ForEach-Object { [void]$lstSrv.Items.Add($_.Name) }
+    Get-ChildItem -LiteralPath $ServersDir -Directory |
+        Where-Object { (Test-Path -LiteralPath (Join-Path $_.FullName '서버켜기.bat')) -and -not (Test-Path -LiteralPath (Join-Path $_.FullName '.installing')) } |
+        ForEach-Object { [void]$lstSrv.Items.Add($_.Name) }
     if ($keep -and $lstSrv.Items.Contains($keep)) { $lstSrv.SelectedItem = $keep }
     elseif ($lstSrv.Items.Count) { $lstSrv.SelectedIndex = 0 }
     else { $lblSrvInfo.Text = "아직 서버가 없어요. [새 서버 만들기] 탭에서 만들어 보세요." }
@@ -424,7 +492,11 @@ function Start-Server([switch]$Local) {
     if (-not $d) { Show-Msg '왼쪽 목록에서 서버를 고르세요.'; return }
     if ($script:srv) { Show-Msg '이미 켜져 있는 서버가 있어요.'; return }
     if ($script:installProc) { Show-Msg '설치나 업데이트가 끝난 다음에 켜 주세요.'; return }
-    if (Test-PortBusy) { Show-Msg "다른 서버가 이미 켜져 있어요 (25565번 포트 사용 중).`n검은 창으로 켠 서버가 있다면 그 창에 stop 을 입력해서 먼저 꺼 주세요." 'Warning'; return }
+    if (Test-PortBusy) {
+        # A server this program lost track of can be saved and stopped from here; anything else needs the user
+        if (@(Get-OrphanServers).Count) { if (-not (Stop-Orphans -Ask)) { return } }
+        if (Test-PortBusy) { Show-Msg "다른 서버가 이미 켜져 있어요 (25565번 포트 사용 중).`n서버켜기.bat 으로 켠 검은 창이 있다면 그 창에 stop 을 입력해서 먼저 꺼 주세요." 'Warning'; return }
+    }
     if (-not (Test-Eula $d)) {
         if (-not (Ask-YesNo "서버를 켜려면 마인크래프트 이용약관(EULA)에 동의해야 해요.`n(약관: https://aka.ms/MinecraftEULA)`n`n동의하고 켤까요?")) { return }
         [IO.File]::WriteAllText((Join-Path $d 'eula.txt'), "eula=true`r`n", $Utf8)
@@ -435,19 +507,26 @@ function Start-Server([switch]$Local) {
     $java = Join-Path $Prog "java\$($li.major)\bin\java.exe"
     if (-not (Test-Path -LiteralPath $java)) { Show-Msg "Java $($li.major) 이(가) 없어요. _program\java 폴더를 확인하세요." 'Error'; return }
 
-    if (-not $Local) {
-        if (-not (Get-PlayitKey)) {
+    if ($Local) {
+        # "혼자 하기" promises nobody else can join, so a Playit left over from an earlier "친구랑 하기" must go
+        if ($script:playit) { $script:playit.Kill(); $script:playit = $null }
+    }
+    else {
+        # "친구랑 하기" without a working Playit would leave the user believing friends can join
+        $why = ''
+        if (-not (Test-Path -LiteralPath (Join-Path $PlayitDir 'playit.exe'))) { $why = 'Playit 프로그램 파일(_program\playit\playit.exe)이 없어서' }
+        elseif (-not (Get-PlayitKey)) {
             $why = 'Playit 연결 설정이 아직 안 돼 있어서'
             if ($script:playitKeyForeign) { $why = '다른 PC에서 옮겨 와서 Playit 키를 이 PC에서 한 번 다시 넣어야 해서' }
-            if (-not (Ask-YesNo "$why 친구들은 들어올 수 없어요.`n([Playit 연결 설정]에서 넣을 수 있어요. 나는 localhost 로 들어갈 수 있어요)`n`n그래도 켤까요?")) { return }
         }
+        if ($why -and -not (Ask-YesNo "$why 친구들은 들어올 수 없어요.`n([Playit 연결 설정]에서 넣을 수 있어요. 나는 localhost 로 들어갈 수 있어요)`n`n그래도 켤까요?")) { return }
         Start-Playit
     }
     $i = Read-Json (Join-Path $d 'server-info.json')
     $mods = @(Get-ChildItem -LiteralPath (Join-Path $d 'mods') -Filter '*.jar' -ErrorAction SilentlyContinue).Count
     $expect = 40 + [int]($mods * 0.35); if ($i -and $i.bootSeconds) { $expect = [int]$i.bootSeconds }
     $txtConsole.Clear()
-    $txtConsole.AppendText("[관리 프로그램] '$($lstSrv.SelectedItem)' 서버를 켜는 중이에요. 이 창을 닫으면 서버가 꺼질 수 있으니 [서버 끄기]로 끄세요.`r`n")
+    $txtConsole.AppendText("[관리 프로그램] '$($lstSrv.SelectedItem)' 서버를 켜는 중이에요. 끌 때는 [■ 서버 끄기]를 눌러 주세요.`r`n")
     $proc = New-Object McProc($java, $li.args, $d, [Text.Encoding]::Default.CodePage)
     $script:srv = [pscustomobject]@{
         dir = $d; name = $lstSrv.SelectedItem; proc = $proc; sw = [Diagnostics.Stopwatch]::StartNew(); expect = $expect
@@ -460,12 +539,11 @@ function Start-Server([switch]$Local) {
     Set-State "● 켜는 중...  ($mode, 다 켜질 때까지 기다려 주세요)" ([Drawing.Color]::DarkOrange)
 }
 
-function Stop-Server([switch]$Force) {
+function Stop-Server([switch]$NoAsk) {
     $s = $script:srv; if (-not $s -or $s.stopping) { return }
-    if ($Force) { $s.stopping = $true; $s.proc.Kill(); return }
     if (-not $s.done -and $s.stage -lt 3) {
         # Still loading mods: no world is open yet, so ending the process is safe
-        if (-not (Ask-YesNo '아직 켜지는 중이에요. 그만 켜고 끌까요?')) { return }
+        if (-not $NoAsk -and -not (Ask-YesNo '아직 켜지는 중이에요. 그만 켜고 끌까요?')) { return }
         $s.stopping = $true; $s.proc.Kill(); return
     }
     $s.stopping = $true; $s.stopSw = [Diagnostics.Stopwatch]::StartNew()
@@ -474,10 +552,12 @@ function Stop-Server([switch]$Force) {
 }
 
 function Find-CulpritMod($s) {
-    # A client-only mod on a server shows up as "Mod File: .../mods/x.jar" next to a client-class error
+    # A client-only mod on a server shows up as "Mod File: .../mods/x.jar" next to a client-class error.
+    # Other failures (a missing dependency, a broken config) also list mod files; parking those would make things worse.
     $text = $s.tail -join "`n"
     $cr = Get-ChildItem -LiteralPath (Join-Path $s.dir 'crash-reports') -Filter '*.txt' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddMinutes(-5) } | Sort-Object LastWriteTime | Select-Object -Last 1
     if ($cr) { $text += "`n" + [IO.File]::ReadAllText($cr.FullName) }
+    if ($text -notmatch 'invalid dist|net[/.]minecraft[/.]client[/.]') { return $null }
     $m = [regex]::Match($text, 'Mod File:\s*/?(?<p>[^\r\n]+?\.jar)')
     if (-not $m.Success) { return $null }
     $jar = Join-Path (Join-Path $s.dir 'mods') (Split-Path ($m.Groups['p'].Value -replace '/', '\') -Leaf)
@@ -488,6 +568,9 @@ function Complete-Server {
     $s = $script:srv; $script:srv = $null
     $code = $s.proc.Code
     $lstSrv.Enabled = $true; $btnStart.Enabled = $true; $btnLocal.Enabled = $true; $btnStop.Enabled = $false; $btnMods.Enabled = $true; $btnRamSrv.Enabled = $true
+    # No server, no reason to keep a public address open
+    if ($script:playit) { $script:playit.Kill(); $script:playit = $null }
+    Update-PlayitLabel
     Update-UpdateButton
     $lblPlayers.Text = '접속 0명'; $prg.Value = 0
     if ($s.done -or $s.stopping) {
@@ -497,9 +580,12 @@ function Complete-Server {
     }
     Set-State '● 서버가 켜지다가 멈췄어요' ([Drawing.Color]::Firebrick)
     $all = $s.tail -join "`n"
-    $hint = '아래 로그나 서버 폴더의 crash-reports 를 확인하세요.'
-    if ($all -match 'OutOfMemoryError|Could not reserve enough space') { $hint = "메모리(램)가 부족해요. 서버 폴더의 user_jvm_args.txt 에서 -Xmx 숫자를 조정해 보세요." }
-    elseif ($all -match 'FAILED TO BIND TO PORT|Address already in use') { $hint = '다른 서버가 이미 25565번 포트를 쓰고 있어요.' }
+    $hint = '아래 로그를 확인하세요. 모르겠으면 [서버 폴더 열기] → crash-reports 폴더의 최신 파일을 도와줄 사람에게 보여 주세요.'
+    if ($all -match 'Could not reserve enough space|Invalid maximum heap size|Error occurred during initialization of VM') {
+        $hint = '이 컴퓨터에 서버 램으로 줄 메모리가 모자라요. 오른쪽 위 [서버 램] 숫자를 1~2 낮추고 [램 바꾸기]를 누른 뒤 다시 켜 보세요.'
+    }
+    elseif ($all -match 'OutOfMemoryError') { $hint = '서버 램이 모자라요. 오른쪽 위 [서버 램] 숫자를 1~2 올리고 [램 바꾸기]를 누른 뒤 다시 켜 보세요.' }
+    elseif ($all -match 'FAILED TO BIND TO PORT|Address already in use') { $hint = '다른 서버가 이미 25565번 포트를 쓰고 있어요. 프로그램을 닫았다가 다시 켜면 찾아서 꺼 드려요.' }
     $lblStage.Text = $hint
     $txtConsole.AppendText("`r`n[관리 프로그램] 서버가 멈췄어요 (종료 코드 $code). $hint`r`n")
     $jar = Find-CulpritMod $s
@@ -599,15 +685,12 @@ $btnAddFriend.Add_Click({
         Show-Msg "'$nick' 님은 서버가 다음에 켜질 때 자동으로 추가할게요."
     })
 $btnFolder.Add_Click({ $d = Get-SelDir; if ($d) { Start-Process explorer.exe "`"$d`"" } })
-$btnBackup.Add_Click({
-        $d = Get-SelDir; if (-not $d) { return }
-        if ($script:srv) { Show-Msg '서버를 끈 다음에 백업하세요.'; return }
-        Start-Process (Join-Path $d '월드백업.bat') -WorkingDirectory $d
-    })
-$btnFriend.Add_Click({ $d = Get-SelDir; if ($d) { Update-FriendGuide $d; Start-Process notepad.exe "`"$(Join-Path $d '친구접속안내.txt')`"" } })
+$btnBackup.Add_Click({ Show-Backups })
+$btnFriend.Add_Click({ Show-FriendGuide })
+$btnSettings.Add_Click({ Show-ServerSettings })
 $btnRamSrv.Add_Click({
         $d = Get-SelDir; if (-not $d) { return }
-        if ($script:srv) { Show-Msg '서버를 끈 다음에 바꿀 수 있어요. 바꾼 값은 다음에 켤 때부터 적용돼요.'; return }
+        if (-not (Assert-ServerOff $d)) { return }
         Set-ServerRam $d ([int]$numRamSrv.Value)
         Show-SrvInfo
         Show-Msg "서버 램을 $([int]$numRamSrv.Value)GB로 바꿨어요. 다음에 켤 때부터 적용돼요."
@@ -644,10 +727,14 @@ function Start-Playit {
     $key = Get-PlayitKey
     if (-not $key -or -not (Test-Path -LiteralPath $exe)) { return }
     if ($script:playit -and $script:playit.Running) { return }
+    # Playit appends to its log forever; start fresh once it gets big
+    if ((Test-Path -LiteralPath $PlayitLog) -and (Get-Item -LiteralPath $PlayitLog).Length -gt 5MB) { Remove-Item -LiteralPath $PlayitLog -Force -ErrorAction SilentlyContinue }
     # A dedicated pipe name keeps this copy apart from any other playit running on the PC
     $script:playit = New-Object McProc($exe, "--secret $key --socket-path \\.\pipe\playitd-mcserver -l `"$PlayitLog`"", $PlayitDir, 65001)
 }
 function Update-PlayitLabel {
+    # Playit's own output is not shown anywhere; drain it so it doesn't pile up in memory
+    if ($script:playit) { $x = $null; while ($script:playit.Lines.TryDequeue([ref]$x)) { } }
     $exe = Join-Path $PlayitDir 'playit.exe'
     if (-not (Test-Path -LiteralPath $exe)) { $lblPlayit.ForeColor = [Drawing.Color]::Firebrick; $lblPlayit.Text = "Playit: 프로그램 파일이 없어요`n(_program\playit\playit.exe)"; return }
     if (-not (Get-PlayitKey)) {
@@ -719,7 +806,7 @@ function Get-InstalledProjects($d) {
     $hashes = @(Get-ChildItem -LiteralPath (Join-Path $d 'mods') -Filter '*.jar' -ErrorAction SilentlyContinue | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA1).Hash.ToLower() })
     if (-not $hashes.Count) { return $set }
     $body = @{ hashes = $hashes; algorithm = 'sha1' } | ConvertTo-Json
-    $r = Invoke-RestMethod -Method Post -Uri 'https://api.modrinth.com/v2/version_files' -ContentType 'application/json' -Body $body
+    $r = Invoke-Api 'https://api.modrinth.com/v2/version_files' 30 'Post' $body
     foreach ($p in $r.PSObject.Properties) { $set[$p.Value.project_id] = $true }
     return $set
 }
@@ -727,10 +814,10 @@ function Get-InstalledProjects($d) {
 function Add-ModrinthMod($d, $projectId, $mc, $loader, $installed, $log) {
     if ($installed.ContainsKey($projectId)) { return }
     $installed[$projectId] = $true
-    $proj = Invoke-RestMethod "https://api.modrinth.com/v2/project/$projectId"
+    $proj = Invoke-Api "https://api.modrinth.com/v2/project/$projectId"
     $q = 'loaders=' + [uri]::EscapeDataString('["' + $loader + '"]') + '&game_versions=' + [uri]::EscapeDataString('["' + $mc + '"]')
     # Pipe to unroll: PS 5.1 hands a JSON array over as a single object
-    $vers = @(Invoke-RestMethod "https://api.modrinth.com/v2/project/$projectId/version?$q" | ForEach-Object { $_ })
+    $vers = @(Invoke-Api "https://api.modrinth.com/v2/project/$projectId/version?$q" | ForEach-Object { $_ })
     if (-not $vers.Count) { throw "'$($proj.title)' 은(는) 마인크래프트 $mc / $loader 용 파일이 없어요." }
     $ver = $vers | Where-Object { $_.version_type -eq 'release' } | Select-Object -First 1
     if (-not $ver) { $ver = $vers[0] }
@@ -740,7 +827,7 @@ function Add-ModrinthMod($d, $projectId, $mc, $loader, $installed, $log) {
     $friendDir = Join-Path $d '친구용_추가모드'
     New-Item -ItemType Directory -Force $friendDir | Out-Null
     $dl = Join-Path $friendDir $file.filename
-    & curl.exe -L --fail -s -S -o $dl $file.url
+    & curl.exe -L --fail -s -S --max-time 300 -o $dl $file.url
     if ($LASTEXITCODE -ne 0 -or (Get-FileHash -LiteralPath $dl -Algorithm SHA1).Hash -ne $file.hashes.sha1.ToUpper()) { throw "'$($proj.title)' 파일을 받지 못했어요." }
     if ($serverSide) { Copy-Item -LiteralPath $dl -Destination (Join-Path $d 'mods') -Force }
     if (-not $clientSide) { Remove-Item -LiteralPath $dl }   # server-only: friends don't need it
@@ -751,14 +838,14 @@ function Add-ModrinthMod($d, $projectId, $mc, $loader, $installed, $log) {
     $log.Invoke("추가: $($proj.title) $($ver.version_number)  ->  $($where -join ', ')")
     foreach ($dep in @($ver.dependencies | Where-Object { $_.dependency_type -eq 'required' })) {
         $pid2 = $dep.project_id
-        if (-not $pid2 -and $dep.version_id) { $pid2 = (Invoke-RestMethod "https://api.modrinth.com/v2/version/$($dep.version_id)").project_id }
+        if (-not $pid2 -and $dep.version_id) { $pid2 = (Invoke-Api "https://api.modrinth.com/v2/version/$($dep.version_id)").project_id }
         if ($pid2) { Add-ModrinthMod $d $pid2 $mc $loader $installed $log }
     }
 }
 
 function Show-ModManager {
     $d = Get-SelDir; if (-not $d) { return }
-    if ($script:srv) { Show-Msg '서버를 끈 다음에 모드를 바꾸세요.'; return }
+    if (-not (Assert-ServerOff $d)) { return }
     $i = Read-Json (Join-Path $d 'server-info.json')
     if (-not $i -or -not $i.mc -or -not $i.loader) { Show-Msg '이 서버의 마인크래프트 버전 정보를 찾지 못했어요 (server-info.json).' 'Error'; return }
     $mc = $i.mc; $loader = $i.loader
@@ -783,7 +870,7 @@ function Show-ModManager {
     $script:modHits = @()
     $bq.Add_Click({
             $facets = [uri]::EscapeDataString("[[`"project_type:mod`"],[`"versions:$mc`"],[`"categories:$loader`"]]")
-            try { $r = Invoke-RestMethod "https://api.modrinth.com/v2/search?query=$([uri]::EscapeDataString($tq.Text))&facets=$facets&limit=30" }
+            try { $r = Invoke-Api "https://api.modrinth.com/v2/search?query=$([uri]::EscapeDataString($tq.Text))&facets=$facets&limit=30" }
             catch { $log.Invoke("검색 실패: $($_.Exception.Message)"); return }
             $script:modHits = @($r.hits)
             $lv.Items.Clear()
@@ -840,19 +927,27 @@ function Show-ModManager {
 $btnMods.Add_Click({ Show-ModManager })
 
 # ---------------- Security check ----------------
+function ConvertFrom-PropEscape([string]$v) { return [regex]::Replace($v, '\\u([0-9a-fA-F]{4})', { param($m) [string][char][Convert]::ToInt32($m.Groups[1].Value, 16) }) }
+function ConvertTo-PropEscape([string]$v) {
+    # Java properties are read as ISO-8859-1 by older servers; \uXXXX escapes keep Korean text intact on every version
+    $sb = New-Object Text.StringBuilder
+    foreach ($ch in $v.ToCharArray()) { if ([int]$ch -gt 126) { [void]$sb.AppendFormat('\u{0:x4}', [int]$ch) } else { [void]$sb.Append($ch) } }
+    return $sb.ToString()
+}
 function Get-Props($d) {
     $p = Join-Path $d 'server.properties'; $h = [ordered]@{}
-    if (Test-Path -LiteralPath $p) { foreach ($l in [IO.File]::ReadAllLines($p)) { if ($l -match '^\s*([^#=]+?)\s*=(.*)$') { $h[$Matches[1]] = $Matches[2].Trim() } } }
+    if (Test-Path -LiteralPath $p) { foreach ($l in [IO.File]::ReadAllLines($p)) { if ($l -match '^\s*([^#=]+?)\s*=(.*)$') { $h[$Matches[1]] = ConvertFrom-PropEscape $Matches[2].Trim() } } }
     return $h
 }
 function Set-Props($d, [hashtable]$changes) {
-    # Rewrites only the given keys; Latin-1 keeps any other bytes in the file untouched
+    # Rewrites only the given keys; Latin-1 keeps any other bytes in the file untouched, new values are pure ASCII
     $p = Join-Path $d 'server.properties'; $enc = [Text.Encoding]::GetEncoding(28591)
     $lines = @(); if (Test-Path -LiteralPath $p) { $lines = @([IO.File]::ReadAllLines($p, $enc)) }
     foreach ($k in $changes.Keys) {
+        $val = ConvertTo-PropEscape ([string]$changes[$k])
         $found = $false
-        $lines = @($lines | ForEach-Object { if ($_ -match "^\s*$([regex]::Escape($k))\s*=") { $found = $true; "$k=$($changes[$k])" } else { $_ } })
-        if (-not $found) { $lines += "$k=$($changes[$k])" }
+        $lines = @($lines | ForEach-Object { if ($_ -match "^\s*$([regex]::Escape($k))\s*=") { $found = $true; "$k=$val" } else { $_ } })
+        if (-not $found) { $lines += "$k=$val" }
     }
     [IO.File]::WriteAllLines($p, [string[]]$lines, $enc)
 }
@@ -916,14 +1011,26 @@ function Show-Security {
     [void]$lv.Columns.Add('결과', 70); [void]$lv.Columns.Add('항목', 250); [void]$lv.Columns.Add('설명', 520)
     $bfix = New-Ctl Button 15 272 300 36 '고칠 수 있는 것 자동으로 고치기'
     $lnote = New-Ctl Label 325 278 545 24 ''; $lnote.ForeColor = [Drawing.Color]::DimGray
-    $tips = New-Ctl TextBox 15 318 855 290; $tips.Multiline = $true; $tips.ReadOnly = $true; $tips.ScrollBars = 'Vertical'; $tips.BackColor = [Drawing.Color]::White
+    $tips = New-Ctl TextBox 15 318 855 250; $tips.Multiline = $true; $tips.ReadOnly = $true; $tips.ScrollBars = 'Vertical'; $tips.BackColor = [Drawing.Color]::White
+    $bTun = New-Ctl Button 15 575 270 36 'playit.gg 터널 페이지 열기'
+    $bGuide = New-Ctl Button 295 575 270 36 '친구 접속 안내 열기'
+    $bTun.Add_Click({ Open-Url 'https://playit.gg/account/tunnels' })
+    $bGuide.Add_Click({ $f.Close(); Show-FriendGuide })
     $tips.Text = @"
-[ 디도스(DDoS) 공격 막기 ]
- - 우리 집 IP 주소를 절대 알려 주지 마세요. 친구들에게는 Playit 주소(어쩌구.joinmc.link)만 알려 주세요.
+[ 평소에 지킬 것 ]
+ - 친구들에게는 Playit 주소(어쩌구.joinmc.link)만 알려 주세요. 우리 집 IP 주소는 절대 알려 주지 마세요.
    공격이 들어와도 Playit 쪽이 먼저 맞아서 우리 집 인터넷까지는 잘 안 와요.
- - 공유기 포트포워딩(25565)은 하지 마세요. 포트포워딩을 하면 집 IP가 그대로 드러나요.
- - 공격을 받는 것 같으면(갑자기 렉, 접속 끊김): playit.gg 에서 그 터널을 지우고 새로 만드세요. 주소가 바뀌어서 공격이 끊겨요. 새 주소는 믿는 친구에게만 알려 주세요.
+ - 공유기 포트포워딩(25565)은 하지 마세요. Playit을 쓰면 필요 없고, 하면 집 IP가 그대로 드러나요.
  - 서버 주소를 유튜브, 디스코드 공개 채널, 커뮤니티에 올리지 마세요.
+
+[ 공격을 받는 것 같을 때 (갑자기 렉, 다들 접속이 끊김) - 순서대로 하세요 ]
+ 1. 메인 화면에서 [■ 서버 끄기] → "꺼짐"이 될 때까지 기다리기
+ 2. 아래 [playit.gg 터널 페이지 열기] → 지금 쓰던 터널을 지우기(Delete)
+ 3. 같은 페이지에서 [Add Tunnel] → Minecraft Java, 127.0.0.1, 25565 로 새로 만들기
+    (처음 연결할 때 [Playit 연결 설정] 창 ③단계와 같아요)
+ 4. 새로 생긴 주소를 복사 → 아래 [친구 접속 안내 열기] → 믿는 친구에게만 새 주소와 함께 보내기
+ 5. 메인 화면에서 [▶ 친구랑 하기]로 다시 켜기
+ → 예전 주소는 없어졌으니 공격이 더는 우리 서버에 닿지 않아요.
 
 [ 계정과 파일 ]
  - Playit 비밀 키는 이 PC의 이 Windows 계정에서만 풀리게 암호화해서 저장해요. 그래도 폴더를 남에게 주거나 클라우드에 올리지 마세요.
@@ -939,7 +1046,9 @@ function Show-Security {
  - 월드 백업을 자주 하세요. 누가 망가뜨려도 되돌릴 수 있어요.
  - 서버는 일반 권한으로 실행하세요(관리자 권한 X).
 "@
-    $f.Controls.AddRange(@($lv, $bfix, $lnote, $tips))
+    # A TextBox only breaks lines on CRLF; this script file is saved with LF
+    $tips.Text = $tips.Text -replace "`r?`n", "`r`n"
+    $f.Controls.AddRange(@($lv, $bfix, $lnote, $tips, $bTun, $bGuide))
     $fill = {
         $lv.Items.Clear(); $script:secReport = Get-SecurityReport $d; $bad = 0
         foreach ($it in $script:secReport) {
@@ -951,7 +1060,7 @@ function Show-Security {
         $lnote.Text = "확인이 필요한 항목 $($bad)개"
     }
     $bfix.Add_Click({
-            if ($script:srv -and $script:srv.dir -eq $d) { Show-Msg '서버를 끈 다음에 고치세요.'; return }
+            if (-not (Assert-ServerOff $d)) { return }
             Repair-Security $d $script:secReport; & $fill
             $left = @($script:secReport | Where-Object { -not $_.ok }).Count
             if ($left) { Show-Msg "자동으로 고칠 수 있는 건 고쳤어요. 남은 $($left)개는 설명을 보고 직접 확인해 주세요." } else { Show-Msg '모두 안전해요.' }
@@ -960,6 +1069,275 @@ function Show-Security {
     [void]$f.ShowDialog($form)
 }
 $btnSecurity.Add_Click({ Show-Security })
+
+# ---------------- is a server really running? (however it was started) ----------------
+function Get-LevelDir($d) { $lv = (Get-Props $d)['level-name']; if (-not $lv) { $lv = 'world' }; return Join-Path $d $lv }
+function Test-ServerRunning($d) {
+    if ($script:srv -and $script:srv.dir -eq $d) { return $true }
+    # Minecraft keeps world\session.lock open the whole time it runs, whether started here, by the .bat or left over
+    $lock = Join-Path (Get-LevelDir $d) 'session.lock'
+    if (-not (Test-Path -LiteralPath $lock)) { return $false }
+    try { $fs = [IO.File]::Open($lock, 'Open', 'ReadWrite', 'None'); $fs.Close(); return $false } catch { return $true }
+}
+function Assert-ServerOff($d) {
+    if (-not (Test-ServerRunning $d)) { return $true }
+    $how = '[■ 서버 끄기]를 누르고 "꺼짐"이 된 다음에 해 주세요.'
+    if (-not ($script:srv -and $script:srv.dir -eq $d)) { $how = "이 프로그램 밖에서 켜진 서버예요. 프로그램을 닫았다가 다시 켜면 찾아서 안전하게 꺼 드려요." }
+    Show-Msg "서버가 켜져 있어서 지금은 할 수 없어요.`n$how" 'Warning'
+    return $false
+}
+
+# ---------------- servers left running after the program was closed abnormally ----------------
+$Launcher = Join-Path $Root '모드팩서버관리.exe'
+function Get-OrphanServers {
+    $javaRoot = Join-Path $Prog 'java'
+    $mine = 0; if ($script:srv) { $mine = $script:srv.proc.P.Id }
+    return @(Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Where-Object {
+            $_.ExecutablePath -like "$javaRoot*" -and $_.ProcessId -ne $mine -and $_.CommandLine -notmatch 'installServer' })
+}
+function Stop-Orphans([switch]$Ask) {
+    $orphans = Get-OrphanServers
+    if (-not $orphans.Count) { return $true }
+    if ($Ask -and -not (Ask-YesNo "이 프로그램 밖에서 돌아가고 있는 서버가 있어요.`n(프로그램이 비정상적으로 꺼졌거나, 서버켜기.bat 으로 켠 서버예요)`n`n지금 월드를 저장하고 안전하게 끌까요?`n[아니요]를 누르면 계속 돌아가지만, 이 프로그램으로는 조작할 수 없어요.")) { return $false }
+    Set-State '● 남아 있던 서버를 저장하고 끄는 중...' ([Drawing.Color]::SlateGray); $form.Refresh()
+    foreach ($o in $orphans) {
+        # Ctrl+C makes Java run Minecraft's shutdown hook, which saves every world before exiting
+        if (Test-Path -LiteralPath $Launcher) { Start-Process -FilePath $Launcher -ArgumentList "--ctrlc $($o.ProcessId)" -WindowStyle Hidden -Wait }
+    }
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    while (@(Get-OrphanServers).Count -and $sw.Elapsed.TotalSeconds -lt 120) { Pump 500 }
+    $left = Get-OrphanServers
+    if ($left.Count -and (Ask-YesNo '남아 있던 서버가 2분 넘게 안 꺼지고 있어요. 강제로 끌까요? (최근 몇 분 진행이 저장 안 될 수 있어요)')) {
+        foreach ($o in $left) { Stop-Process -Id $o.ProcessId -Force -ErrorAction SilentlyContinue }
+    }
+    Set-State '● 꺼짐' ([Drawing.Color]::Gray)
+    return -not @(Get-OrphanServers).Count
+}
+function Stop-OrphanPlayit {
+    # A Playit started by an earlier, crashed session would clash with the one this session starts
+    Get-CimInstance Win32_Process -Filter "Name='playit.exe'" | Where-Object { $_.CommandLine -match 'playitd-mcserver' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
+# ---------------- installs or updates that never finished ----------------
+function Repair-Leftovers {
+    $notes = @()
+    foreach ($f in @(Get-ChildItem -LiteralPath $ServersDir -Directory)) {
+        $mk = Join-Path $f.FullName '.installing'
+        if (-not (Test-Path -LiteralPath $mk)) { continue }
+        $of = ''; if ((Get-Content -LiteralPath $mk -Raw) -match 'update-of=(.*)') { $of = $Matches[1].Trim() }
+        try {
+            if ($of -and $f.Name -eq $of) { Remove-Item -LiteralPath $mk -Force; continue }   # stopped right after the swap: it is complete
+            if ($of) {
+                $orig = Join-Path $ServersDir $of
+                if (Test-Path -LiteralPath $orig) {
+                    # Update stopped before the swap: give the world back to the original server if it had moved
+                    $tw = Get-LevelDir $f.FullName; $ow = Join-Path $orig (Split-Path $tw -Leaf)
+                    if ((Test-Path -LiteralPath (Join-Path $tw 'level.dat')) -and -not (Test-Path -LiteralPath $ow)) { Move-Item -LiteralPath $tw -Destination $ow; $notes += "'$of' 서버의 월드를 원래 자리로 되돌렸어요." }
+                    Remove-Item -LiteralPath $f.FullName -Recurse -Force
+                    $notes += "'$of' 모드팩 업데이트가 중간에 끊겨서 취소했어요. 서버는 예전 버전 그대로예요."
+                }
+                else {
+                    # The old server was already archived: finishing the swap completes the update
+                    Rename-Item -LiteralPath $f.FullName -NewName $of
+                    Remove-Item -LiteralPath (Join-Path $orig '.installing') -Force
+                    $notes += "'$of' 모드팩 업데이트를 마저 끝냈어요."
+                }
+            }
+            else { Remove-Item -LiteralPath $f.FullName -Recurse -Force; $notes += "끝나지 못한 서버 만들기('$($f.Name)')를 정리했어요. 다시 만들면 돼요." }
+        }
+        catch { $notes += "'$($f.Name)' 정리 중 문제가 생겼어요: $($_.Exception.Message)" }
+    }
+    if ($notes.Count) { Show-Msg ($notes -join "`n") }
+}
+
+# ---------------- backups and world reset (all in-app, server must be off) ----------------
+function New-WorldBackup($d, [string]$tag) {
+    # Zips the world in a background PowerShell so the window stays responsive on big worlds
+    $w = Get-LevelDir $d
+    if (-not (Test-Path -LiteralPath $w)) { return $null }
+    $bk = Join-Path $d 'backups'; New-Item -ItemType Directory -Force $bk | Out-Null
+    $zip = Join-Path $bk ("${tag}_" + (Get-Date -Format 'yyyyMMdd_HHmmss') + '.zip')
+    $cmd = "Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::CreateFromDirectory('$($w -replace "'", "''")', '$($zip -replace "'", "''")')"
+    $p = New-Object McProc('powershell.exe', "-NoProfile -Command `"$cmd`"", $d, [Text.Encoding]::Default.CodePage)
+    while ($p.Running) { Pump 300 }
+    if ((Test-Path -LiteralPath $zip) -and (Get-Item -LiteralPath $zip).Length -gt 0) { return $zip }
+    return $null
+}
+function Restore-WorldBackup($d, [string]$zip) {
+    $w = Get-LevelDir $d
+    $tmp = Join-Path $d ('_restore_' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+    [IO.Compression.ZipFile]::ExtractToDirectory($zip, $tmp)
+    # Older backups hold a "world" folder; newer ones hold the world's contents directly
+    $src = $tmp; $top = @(Get-ChildItem -LiteralPath $tmp -Force)
+    if ($top.Count -eq 1 -and $top[0].PSIsContainer -and -not (Test-Path -LiteralPath (Join-Path $tmp 'level.dat'))) { $src = $top[0].FullName }
+    if (-not (Test-Path -LiteralPath (Join-Path $src 'level.dat'))) { Remove-Item -LiteralPath $tmp -Recurse -Force; throw '이 백업 파일에는 월드가 들어 있지 않아요.' }
+    if (Test-Path -LiteralPath $w) { Remove-Item -LiteralPath $w -Recurse -Force }
+    Move-Item -LiteralPath $src -Destination $w
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
+}
+
+function Show-Backups {
+    $d = Get-SelDir; if (-not $d) { return }
+    $f = New-Object Windows.Forms.Form
+    $f.Text = "백업 / 월드 관리 - $($lstSrv.SelectedItem)"; $f.Size = New-Object Drawing.Size(760, 520); $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.Font = $font
+    $l1 = New-Ctl Label 15 12 720 40 "백업은 서버 폴더의 backups 에 저장돼요. 아래 기능은 모두 서버를 끈 상태에서만 돼요.`n되돌리거나 새로 만들기 전에 지금 월드를 자동으로 한 번 더 백업해요."
+    $lv = New-Object Windows.Forms.ListView; $lv.Location = New-Object Drawing.Point(15, 58); $lv.Size = New-Object Drawing.Size(715, 280); $lv.View = 'Details'; $lv.FullRowSelect = $true; $lv.Font = $font
+    [void]$lv.Columns.Add('백업', 360); [void]$lv.Columns.Add('만든 때', 190); [void]$lv.Columns.Add('크기', 140)
+    $bNow = New-Ctl Button 15 348 230 38 '지금 백업하기'
+    $bRestore = New-Ctl Button 255 348 230 38 '선택한 백업으로 되돌리기'
+    $bOpen = New-Ctl Button 495 348 235 38 '백업 폴더 열기'
+    $bReset = New-Ctl Button 15 400 300 38 '월드 새로 만들기 (처음부터)'
+    $bReset.ForeColor = [Drawing.Color]::Firebrick
+    $lst = New-Ctl Label 330 395 400 75 ''; $lst.ForeColor = [Drawing.Color]::DarkGreen
+    $f.Controls.AddRange(@($l1, $lv, $bNow, $bRestore, $bOpen, $bReset, $lst))
+    $fill = {
+        $lv.Items.Clear()
+        $script:bkFiles = @(Get-ChildItem -LiteralPath (Join-Path $d 'backups') -Filter '*.zip' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+        foreach ($b in $script:bkFiles) {
+            $it = New-Object Windows.Forms.ListViewItem($b.Name)
+            [void]$it.SubItems.Add($b.LastWriteTime.ToString('yyyy-MM-dd HH:mm')); [void]$it.SubItems.Add(('{0:N0} MB' -f ($b.Length / 1MB)))
+            [void]$lv.Items.Add($it)
+        }
+    }
+    $bNow.Add_Click({
+            if (-not (Assert-ServerOff $d)) { return }
+            $lst.Text = '백업하는 중... (월드가 크면 몇 분 걸려요)'; $f.Cursor = 'WaitCursor'
+            $z = New-WorldBackup $d 'backup'
+            $f.Cursor = 'Default'
+            if ($z) { $lst.Text = "백업했어요: $(Split-Path $z -Leaf)" } else { $lst.Text = '백업할 월드가 없어요. (서버를 한 번도 안 켰다면 월드가 아직 없어요)' }
+            & $fill
+        })
+    $bRestore.Add_Click({
+            if ($lv.SelectedIndices.Count -eq 0) { Show-Msg '목록에서 되돌릴 백업을 고르세요.'; return }
+            if (-not (Assert-ServerOff $d)) { return }
+            $b = $script:bkFiles[$lv.SelectedIndices[0]]
+            if (-not (Ask-YesNo "'$($b.Name)' 시점으로 월드를 되돌릴까요?`n지금 월드는 되돌리기 전에 자동으로 백업해 둬요.")) { return }
+            $f.Cursor = 'WaitCursor'; $lst.Text = '지금 월드를 백업하는 중...'
+            try {
+                if ((Test-Path -LiteralPath (Get-LevelDir $d)) -and -not (New-WorldBackup $d 'before-restore')) { throw '지금 월드를 백업하지 못해서 되돌리기를 멈췄어요.' }
+                $lst.Text = '되돌리는 중...'; Pump 50
+                Restore-WorldBackup $d $b.FullName
+                $lst.Text = "되돌렸어요: $($b.Name)"
+            }
+            catch { Show-Msg "되돌리지 못했어요: $($_.Exception.Message)" 'Error'; $lst.Text = '' }
+            finally { $f.Cursor = 'Default'; & $fill }
+        })
+    $bOpen.Add_Click({ $bd = Join-Path $d 'backups'; New-Item -ItemType Directory -Force $bd | Out-Null; Start-Process explorer.exe "`"$bd`"" })
+    $bReset.Add_Click({
+            if (-not (Assert-ServerOff $d)) { return }
+            if (-not (Ask-YesNo "월드를 처음부터 새로 만들까요?`n지금 월드는 자동으로 백업해 둬서, 나중에 [선택한 백업으로 되돌리기]로 돌아올 수 있어요.`n`n화이트리스트, 설정, 모드는 그대로예요.")) { return }
+            $seed = (Ask-Text "새 월드의 시드(seed)를 정할 수 있어요.`n모르면 비워 두세요 (무작위).").Trim()
+            $f.Cursor = 'WaitCursor'; $lst.Text = '지금 월드를 백업하는 중...'
+            try {
+                $w = Get-LevelDir $d
+                if (Test-Path -LiteralPath $w) {
+                    if (-not (New-WorldBackup $d 'before-reset')) { throw '지금 월드를 백업하지 못해서 멈췄어요.' }
+                    # Datapacks that came with the modpack stay; everything else goes
+                    $dp = Join-Path $w 'datapacks'; $keep = Join-Path $d ('_dp_' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+                    if (Test-Path -LiteralPath $dp) { Move-Item -LiteralPath $dp -Destination $keep }
+                    Remove-Item -LiteralPath $w -Recurse -Force
+                    if (Test-Path -LiteralPath $keep) { New-Item -ItemType Directory -Force $w | Out-Null; Move-Item -LiteralPath $keep -Destination (Join-Path $w 'datapacks') }
+                }
+                Set-Props $d @{ 'level-seed' = $seed }
+                $lst.Text = '새 월드는 다음에 서버를 켤 때 만들어져요.'
+            }
+            catch { Show-Msg "새로 만들지 못했어요: $($_.Exception.Message)" 'Error'; $lst.Text = '' }
+            finally { $f.Cursor = 'Default'; & $fill }
+        })
+    & $fill
+    [void]$f.ShowDialog($form)
+}
+
+# ---------------- server settings (server.properties without Notepad) ----------------
+function Show-ServerSettings {
+    $d = Get-SelDir; if (-not $d) { return }
+    $pr = Get-Props $d
+    $f = New-Object Windows.Forms.Form
+    $f.Text = "서버 설정 - $($lstSrv.SelectedItem)"; $f.Size = New-Object Drawing.Size(620, 640); $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.Font = $font
+    $running = Test-ServerRunning $d
+    $top = New-Ctl Label 15 10 580 40 '바꾼 설정은 다음에 서버를 켤 때부터 적용돼요.'
+    if ($running) { $top.Text = '서버가 켜져 있어서 지금은 볼 수만 있어요. 서버를 끈 다음에 바꿔 주세요.'; $top.ForeColor = [Drawing.Color]::Firebrick }
+    $f.Controls.Add($top)
+    $y = 55; $ctl = @{}
+    function Row($label) { $l = New-Ctl Label 15 ($script:rowY + 3) 230 24 $label; $f.Controls.Add($l) }
+    $script:rowY = $y
+    function Add-Combo($key, $label, $opts, $def) {
+        Row $label
+        $c = New-Ctl ComboBox 250 $script:rowY 330 28; $c.DropDownStyle = 'DropDownList'
+        foreach ($o in $opts) { [void]$c.Items.Add($o[1]) }
+        $cur = $pr[$key]; if (-not $cur) { $cur = $def }
+        $idx = 0; for ($i = 0; $i -lt $opts.Count; $i++) { if ($opts[$i][0] -eq $cur) { $idx = $i } }
+        $c.SelectedIndex = $idx; $f.Controls.Add($c); $ctl[$key] = @{ kind = 'combo'; c = $c; opts = $opts }; $script:rowY += 36
+    }
+    function Add-Num($key, $label, $min, $max, $def) {
+        Row $label
+        $n = New-Ctl NumericUpDown 250 $script:rowY 90 28; $n.Minimum = $min; $n.Maximum = $max
+        $v = $def; if ($pr[$key] -match '^\d+$') { $v = [int]$pr[$key] }; $n.Value = [Math]::Min($max, [Math]::Max($min, $v))
+        $f.Controls.Add($n); $ctl[$key] = @{ kind = 'num'; c = $n }; $script:rowY += 36
+    }
+    function Add-Check($key, $label, $def) {
+        $c = New-Ctl CheckBox 15 $script:rowY 565 26 $label
+        $v = $pr[$key]; if (-not $v) { $v = $def }; $c.Checked = $v -eq 'true'
+        $f.Controls.Add($c); $ctl[$key] = @{ kind = 'check'; c = $c }; $script:rowY += 32
+    }
+    Row '서버 설명 (목록에 보이는 글)'
+    $motd = New-Ctl TextBox 250 $script:rowY 330 28; $motd.Text = $pr['motd']; $f.Controls.Add($motd); $script:rowY += 36
+    Add-Combo 'difficulty' '난이도' @(@('peaceful', '평화로움 (몬스터 없음)'), @('easy', '쉬움'), @('normal', '보통'), @('hard', '어려움')) 'normal'
+    Add-Combo 'gamemode' '처음 들어온 사람의 게임 모드' @(@('survival', '서바이벌'), @('creative', '크리에이티브'), @('adventure', '모험'), @('spectator', '관전')) 'survival'
+    Add-Num 'max-players' '최대 인원' 1 100 10
+    Add-Num 'view-distance' '시야 거리 (낮추면 렉이 줄어요)' 3 32 10
+    Add-Num 'simulation-distance' '움직이는 거리 (낮추면 렉이 줄어요)' 3 32 10
+    Add-Num 'spawn-protection' '스폰 보호 범위 (블록)' 0 64 16
+    Add-Check 'pvp' '플레이어끼리 공격 가능 (PvP)' 'true'
+    Add-Check 'hardcore' '하드코어 (죽으면 관전 모드)' 'false'
+    Add-Check 'allow-flight' '비행 허용 (모드팩은 켜 두는 게 좋아요. 끄면 날개나 탈것을 쓸 때 쫓겨날 수 있어요)' 'true'
+    Add-Check 'allow-nether' '지옥(네더) 허용' 'true'
+    Add-Check 'spawn-monsters' '몬스터 나오기' 'true'
+    Add-Check 'enable-command-block' '명령 블록 허용' 'false'
+    $bs = New-Ctl Button 15 ($script:rowY + 10) 270 40 '저장'; $bs.Font = $bold
+    $bc = New-Ctl Button 300 ($script:rowY + 10) 140 40 '닫기'
+    $bs.Enabled = -not $running
+    $f.Controls.AddRange(@($bs, $bc))
+    $f.ClientSize = New-Object Drawing.Size(600, ($script:rowY + 65))
+    $bc.Add_Click({ $f.Close() })
+    $bs.Add_Click({
+            if (-not (Assert-ServerOff $d)) { return }
+            $ch = @{ 'motd' = ($motd.Text -replace '[\r\n]', ' ') }
+            foreach ($k in $ctl.Keys) {
+                $e = $ctl[$k]
+                switch ($e.kind) {
+                    'combo' { $ch[$k] = $e.opts[$e.c.SelectedIndex][0] }
+                    'num' { $ch[$k] = [string][int]$e.c.Value }
+                    'check' { $ch[$k] = ([string]$e.c.Checked).ToLower() }
+                }
+            }
+            Set-Props $d $ch
+            Show-Msg '저장했어요. 다음에 서버를 켤 때부터 적용돼요.'
+            $f.Close()
+        })
+    [void]$f.ShowDialog($form)
+}
+
+# ---------------- friend guide (copy to clipboard instead of Notepad) ----------------
+function Show-FriendGuide {
+    $d = Get-SelDir; if (-not $d) { return }
+    Update-FriendGuide $d
+    $g = Join-Path $d '친구접속안내.txt'
+    $text = ''; if (Test-Path -LiteralPath $g) { $text = [IO.File]::ReadAllText($g, $Cp949) }
+    $f = New-Object Windows.Forms.Form
+    $f.Text = "친구 접속 안내 - $($lstSrv.SelectedItem)"; $f.Size = New-Object Drawing.Size(760, 560); $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.Font = $font
+    $l = New-Ctl Label 15 10 720 24 '아래 글을 복사해서 카톡이나 디스코드로 친구에게 보내 주세요.'
+    $tb = New-Ctl TextBox 15 38 715 400; $tb.Multiline = $true; $tb.ReadOnly = $true; $tb.ScrollBars = 'Vertical'; $tb.Text = ($text -replace "`r?`n", "`r`n"); $tb.BackColor = [Drawing.Color]::White
+    $bc = New-Ctl Button 15 448 230 40 '글 전체 복사'; $bc.Font = $bold
+    $bm = New-Ctl Button 255 448 260 40 '친구용 추가모드 폴더 열기'
+    $done = New-Ctl Label 525 455 205 30 ''; $done.ForeColor = [Drawing.Color]::DarkGreen
+    $bm.Enabled = Test-Path -LiteralPath (Join-Path $d '친구용_추가모드')
+    $bc.Add_Click({ [Windows.Forms.Clipboard]::SetText($tb.Text); $done.Text = '복사했어요!' })
+    $bm.Add_Click({ Start-Process explorer.exe "`"$(Join-Path $d '친구용_추가모드')`"" })
+    $f.Controls.AddRange(@($l, $tb, $bc, $bm, $done))
+    [void]$f.ShowDialog($form)
+}
 
 # =====================================================================================
 # Tab: manual (local file, works offline and without any login)
@@ -985,22 +1363,38 @@ $uiTimer.Add_Tick({
 
 $form.Add_FormClosing({
         param($s, $e)
+        $shutdown = $e.CloseReason -eq 'WindowsShutDown'
+        if ($script:installProc) {
+            if (-not $shutdown -and -not (Ask-YesNo "서버 만들기나 업데이트가 아직 진행 중이에요.`n지금 닫으면 중단돼요. (다음에 프로그램을 켜면 정리하고, 다시 하면 돼요)`n`n그래도 닫을까요?")) { $e.Cancel = $true; return }
+            Stop-InstallJob
+        }
         if ($script:srv) {
-            if (-not (Ask-YesNo "서버가 아직 켜져 있어요.`n서버를 안전하게 끄고 프로그램을 닫을까요?")) { $e.Cancel = $true; return }
-            Stop-Server
+            # Windows is shutting down: save without asking, there is no time for questions
+            if (-not $shutdown -and -not (Ask-YesNo "서버가 아직 켜져 있어요.`n서버를 안전하게 끄고 프로그램을 닫을까요?")) { $e.Cancel = $true; return }
+            Stop-Server -NoAsk
+            $limit = 180; if ($shutdown) { $limit = 60 }
             $sw = [Diagnostics.Stopwatch]::StartNew()
-            while ($script:srv -and $sw.Elapsed.TotalSeconds -lt 180) { Pump 250; Read-ServerOutput }
+            while ($script:srv -and $sw.Elapsed.TotalSeconds -lt $limit) { Pump 250; Read-ServerOutput }
             if ($script:srv) { $script:srv.proc.Kill() }
         }
         if ($script:playit) { $script:playit.Kill() }
     })
 
+$form.Add_Shown({
+        # Clean up after a crash or power cut before the user does anything
+        Repair-Leftovers
+        if (@(Get-OrphanServers).Count) { [void](Stop-Orphans -Ask) }
+        if (-not @(Get-OrphanServers).Count) { Stop-OrphanPlayit }
+        Update-Servers
+        $notice = Join-Path $Prog 'updated-notice.txt'
+        if (Test-Path -LiteralPath $notice) {
+            Show-Msg ("프로그램을 새 버전으로 업데이트했어요.`n`n" + [IO.File]::ReadAllText($notice))
+            Remove-Item -LiteralPath $notice -ErrorAction SilentlyContinue
+        }
+    })
+
 Update-Servers
 Update-PlayitLabel
 if ($lstSrv.Items.Count) { $tabs.SelectedTab = $tabMy } else { $tabs.SelectedTab = $tabNew }
-$notice = Join-Path $Prog 'updated-notice.txt'
-if (Test-Path -LiteralPath $notice) {
-    $form.Add_Shown({ Show-Msg ("프로그램을 새 버전으로 업데이트했어요.`n`n" + [IO.File]::ReadAllText($notice)); Remove-Item -LiteralPath $notice -ErrorAction SilentlyContinue })
-}
 $uiTimer.Start()
 [void]$form.ShowDialog()

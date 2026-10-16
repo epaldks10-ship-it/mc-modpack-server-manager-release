@@ -15,6 +15,8 @@
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+# Every API call gets a time limit; a stalled connection fails with a message instead of hanging forever
+$PSDefaultParameterValues['Invoke-RestMethod:TimeoutSec'] = 30
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
@@ -45,10 +47,33 @@ function Get-Download([string]$Url, [string]$OutFile, [long]$Size = 0, [string]$
     }
     if (Test-Ok) { Info "이미 받아 둔 파일을 사용해요: $(Split-Path $OutFile -Leaf)"; return }
     $tmp = "$OutFile.part"
-    Invoke-Curl -L --fail --retry 3 -# -o $tmp $Url
-    if ($LASTEXITCODE -ne 0) { throw "다운로드 실패: $Url" }
+    # Progress as plain lines, so the manager window can show it (a curl progress bar only works in a console)
+    $errFile = "$tmp.err"
+    $p = Start-Process curl.exe -ArgumentList @('-L', '--fail', '--retry', '3', '-s', '-S', '-o', "`"$tmp`"", "`"$Url`"") -NoNewWindow -PassThru -RedirectStandardError $errFile
+    # Windows PowerShell 5.1 loses ExitCode for Start-Process -PassThru unless the handle is opened right away
+    $null = $p.Handle
+    $last = -1
+    while (-not $p.HasExited) {
+        Start-Sleep -Milliseconds 1500
+        if ($Size -gt 0 -and (Test-Path -LiteralPath $tmp)) {
+            $got = (Get-Item -LiteralPath $tmp).Length
+            $pct = [int](100 * $got / $Size)
+            if ($pct -ne $last) { $last = $pct; Info ("다운로드 중... {0}%  ({1:N0}MB / {2:N0}MB)" -f $pct, ($got / 1MB), ($Size / 1MB)) }
+        }
+    }
+    $p.WaitForExit()
+    $err = ''; if (Test-Path -LiteralPath $errFile) { $err = (Get-Content -LiteralPath $errFile -Raw); Remove-Item -LiteralPath $errFile -ErrorAction SilentlyContinue }
+    if ($p.ExitCode -ne 0) { throw "다운로드 실패: $Url $err" }
     Move-Item -Force -LiteralPath $tmp -Destination $OutFile
     if (-not (Test-Ok)) { throw "받은 파일이 손상됐어요 (크기/해시 불일치): $(Split-Path $OutFile -Leaf)" }
+}
+
+function Assert-FreeSpace([long]$needBytes) {
+    # Fail early with a clear message instead of a cryptic write error halfway through a big pack
+    $drive = New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($Root))
+    if ($drive.AvailableFreeSpace -lt $needBytes) {
+        throw ("디스크 공간이 모자라요. {0} 드라이브에 {1:N1}GB가 더 필요해요. (지금 남은 공간 {2:N1}GB)" -f $drive.Name, (($needBytes - $drive.AvailableFreeSpace) / 1GB), ($drive.AvailableFreeSpace / 1GB))
+    }
 }
 
 function Get-JavaMajor([string]$mc) {
@@ -75,6 +100,8 @@ function Get-Java([int]$major) {
     if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
     [IO.Compression.ZipFile]::ExtractToDirectory($zip, $tmp)
     New-Item -ItemType Directory -Force (Split-Path $dir -Parent) | Out-Null
+    # A half-finished earlier attempt would make Move-Item nest the new folder inside the old one
+    if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
     Move-Item (Get-ChildItem $tmp -Directory | Select-Object -First 1).FullName $dir
     Remove-Item -Recurse -Force $tmp
     return $exe
@@ -289,16 +316,23 @@ try {
         $Name = 'upd-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     }
     $dir = Join-Path $ServersDir $Name
+    # ".installing" marks a folder whose install never finished (window closed, PC turned off)
+    if (Test-Path -LiteralPath (Join-Path $dir '.installing')) {
+        Info '지난번에 끝나지 못한 설치를 정리하고 다시 시작해요.'
+        Remove-Item -LiteralPath $dir -Recurse -Force
+    }
     if ((Test-Path -LiteralPath $dir) -and (Get-ChildItem -LiteralPath $dir -Force | Select-Object -First 1)) { throw "'$Name' 폴더가 이미 있어요. 다른 서버 이름을 써 주세요." }
     New-Item -ItemType Directory -Force $dir | Out-Null
     $createdDir = $dir   # removed again if the install fails, so the same name can be retried
+    $upOf = ''; if ($Update) { $upOf = $finalName }
+    Set-Content -LiteralPath (Join-Path $dir '.installing') -Value "update-of=$upOf" -Encoding UTF8
     if ($Update) {
-        $host.UI.RawUI.WindowTitle = "모드팩 업데이트 중: $finalName"
+        try { $host.UI.RawUI.WindowTitle = "모드팩 업데이트 중: $finalName" } catch { }
         Write-Host "모드팩 업데이트: $($pack.name)  $($oldInfo.version) -> 새 버전" -ForegroundColor Yellow
         Write-Host "서버: $oldDir" -ForegroundColor Yellow
     }
     else {
-        $host.UI.RawUI.WindowTitle = "서버 만드는 중: $Name"
+        try { $host.UI.RawUI.WindowTitle = "서버 만드는 중: $Name" } catch { }
         Write-Host "모드팩: $($pack.name)" -ForegroundColor Yellow
         Write-Host "설치 위치: $dir" -ForegroundColor Yellow
     }
@@ -313,6 +347,10 @@ try {
         if (-not $ver) { throw "버전을 찾지 못했어요: $VersionKey" }
         Step "서버팩 받는 중 ($([math]::Round($ver.size / 1GB, 2)) GB, 몇 분 걸려요)"
         $zip = Join-Path $Cache ([uri]::UnescapeDataString(($ver.url -split '/')[-1]))
+        # Room for the zip (unless already cached), the unpacked server, and Java/loader files on top
+        $need = [long]($ver.size * 1.6) + 700MB
+        if (-not ((Test-Path -LiteralPath $zip) -and (Get-Item -LiteralPath $zip).Length -eq $ver.size)) { $need += $ver.size }
+        Assert-FreeSpace $need
         Get-Download $ver.url $zip -Size $ver.size
 
         Step '압축 푸는 중'
@@ -366,6 +404,8 @@ try {
                 if ($_.downloads[0] -match 'cdn\.modrinth\.com/data/([A-Za-z0-9]+)/' -and $clientOnly.ContainsKey($Matches[1])) { $false } else { $true } })
         if ($clientOnly.Count) { Info "화면 전용 모드 $($clientOnly.Count)개는 서버에 필요 없어서 뺐어요: $(($clientOnly.Values | Select-Object -First 6) -join ', ')..." }
 
+        $sum = [long]0; foreach ($m in $files) { $sum += [long]$m.fileSize }
+        Assert-FreeSpace ([long]($sum * 1.3) + 700MB)
         Step "서버용 모드 $($files.Count)개 받는 중"
         $cfg = New-Object System.Text.StringBuilder
         foreach ($m in $files) {
@@ -376,7 +416,15 @@ try {
         }
         $cfgFile = Join-Path $tmp 'curl-list.txt'
         [IO.File]::WriteAllText($cfgFile, $cfg.ToString(), (New-Object Text.UTF8Encoding($false)))
-        Invoke-Curl -g -L --fail --retry 3 --create-dirs --parallel --parallel-max 8 -s -S -K $cfgFile
+        # Parallel download in the background, with a progress line every few seconds for the manager window
+        $cp = Start-Process curl.exe -ArgumentList @('-g', '-L', '--fail', '--retry', '3', '--create-dirs', '--parallel', '--parallel-max', '8', '-s', '-S', '-K', "`"$cfgFile`"") `
+            -NoNewWindow -PassThru -RedirectStandardError (Join-Path $tmp 'curl-err.txt')
+        $lastN = -1
+        while (-not $cp.HasExited) {
+            Start-Sleep -Seconds 2
+            $n = @($files | Where-Object { Test-Path -LiteralPath (Join-Path $dir $_.path) }).Count
+            if ($n -ne $lastN) { $lastN = $n; Info "모드 받는 중... $n / $($files.Count)" }
+        }
         $bad = @()
         foreach ($m in $files) {
             $out = Join-Path $dir $m.path
@@ -485,7 +533,7 @@ echo   서버를 끌 때: 이 창에 stop 입력 후 Enter
 echo   (X 버튼으로 끄면 월드가 망가질 수 있어요!)
 echo ==================================================
 echo.
-echo   (모드팩서버관리.bat 으로 켜면 진행 상황이 보이고 더 편해요)
+echo   (이 창은 예비용이에요. 모드팩서버관리.exe 로 켜면 진행 상황이 보이고 더 편해요)
 echo.
 set "PLAYIT_KEY="
 if exist "%PROG%\playit\secret-key.dpapi" for /f "usebackq delims=" %%k in (``powershell -NoProfile -Command "Add-Type -AssemblyName System.Security; try { [Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String([IO.File]::ReadAllText('%PROG%\playit\secret-key.dpapi').Trim()), [Text.Encoding]::UTF8.GetBytes('mcsm-playit'), 'CurrentUser')) } catch { }"``) do set "PLAYIT_KEY=%%k"
@@ -495,7 +543,7 @@ tasklist /FI "IMAGENAME eq playit.exe" | find /I "playit.exe" >nul
 if errorlevel 1 start "playit - 이 창도 닫지 마세요" /min "%PROG%\playit\playit.exe" --secret %PLAYIT_KEY% --socket-path \\.\pipe\playitd-mcserver -l "%PROG%\playit\playit.log"
 goto run
 :nokey
-echo [주의] Playit 키가 없거나 이 PC에서 풀 수 없어요. 모드팩서버관리.bat 의 [Playit 연결 설정]에서 키를 넣어 주세요.
+echo [주의] Playit 키가 없거나 이 PC에서 풀 수 없어요. 모드팩서버관리.exe 의 [Playit 연결 설정]에서 키를 넣어 주세요.
 echo        지금은 이 컴퓨터에서 localhost 로만 들어갈 수 있어요.
 echo.
 goto run
@@ -507,18 +555,6 @@ echo.
 "%PROG%\java\$major\bin\java.exe" $launch
 echo.
 echo 서버가 꺼졌습니다. 아무 키나 누르면 이 창이 닫혀요.
-pause >nul
-"@
-
-    Write-Cp949 (Join-Path $dir '월드백업.bat') @"
-@echo off
-title 월드 백업
-cd /d "%~dp0"
-echo 서버가 꺼져 있을 때만 실행하세요.
-echo 월드를 backups 폴더에 압축해서 저장합니다...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "`$t=Get-Date -Format 'yyyyMMdd_HHmm'; New-Item -ItemType Directory -Force backups | Out-Null; Compress-Archive -Path world -DestinationPath ('backups\world_' + `$t + '.zip'); Write-Host ('Saved: backups\world_' + `$t + '.zip')"
-echo.
-echo 끝났어요. 아무 키나 누르면 창이 닫혀요.
 pause >nul
 "@
 
@@ -552,6 +588,7 @@ pause >nul
         try { Rename-Item -LiteralPath $dir -NewName $finalName }
         catch { Move-Item -LiteralPath $oldKeep -Destination $oldDir; throw "새 버전 폴더 이름을 바꾸지 못했어요: $($_.Exception.Message)" }
         $script:worldMovedTo = $null; $createdDir = $null
+        Remove-Item -LiteralPath (Join-Path (Join-Path $ServersDir $finalName) '.installing') -Force
         Write-Host ''
         Write-Host '==================================================' -ForegroundColor Green
         Write-Host "  업데이트 완료! '$finalName' 서버가 $verLabel 이(가) 됐어요." -ForegroundColor Green
@@ -562,11 +599,13 @@ pause >nul
         $result = 'ok'
     }
     else {
+        Remove-Item -LiteralPath (Join-Path $dir '.installing') -Force
+        $createdDir = $null
         Write-Host ''
         Write-Host '==================================================' -ForegroundColor Green
         Write-Host "  완료! '$Name' 서버가 준비됐어요." -ForegroundColor Green
         Write-Host "  마인크래프트 $($li.mc) / $($li.loader) $($li.version) / Java $major" -ForegroundColor Green
-        Write-Host '  관리 프로그램의 [내 서버] 탭에서 [▶ 친구랑 하기] 또는 [▶ 혼자 하기]를 누르세요.' -ForegroundColor Green
+        Write-Host '  [내 서버] 탭에서 [▶ 친구랑 하기] 또는 [▶ 혼자 하기]를 누르세요.' -ForegroundColor Green
         if (-not $AcceptEula) { Write-Host '  (EULA는 서버를 처음 켤 때 다시 물어봐요)' -ForegroundColor Yellow }
         Write-Host '==================================================' -ForegroundColor Green
         $result = 'ok'
