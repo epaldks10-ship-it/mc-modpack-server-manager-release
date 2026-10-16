@@ -98,6 +98,31 @@ $vf = Join-Path $Prog 'version.txt'; if (Test-Path -LiteralPath $vf) { $AppVersi
 # Releases are signed with a key that lives only on the developer's PC (%APPDATA%\mcsm-release), never on GitHub,
 # so a hijacked GitHub account still cannot push a fake update to anyone.
 $UpdatePublicKey = '<RSAKeyValue><Modulus>wXz1yU+YDIoKe4S680x7saNhbFzm4qbt3MF2upIthdWQ5iq5MGc8LZcUD0v1hKDAuCIKZL6J/zYnP27olo/ZwSVF7aMaAPZ4itpysxc+Tg+e38rtmh+yqdnZP7XVNVpFw6x+mE5nOqIHzaljzaNT9HuOA2OnN7bVbM8IuCC9t6qUzAi8fFyyzhT1LTUduLaEg1WclRthX42nQqtl1FlENFR2a4BxCc3bmoH1rOxX1LViTsyzySX/83u1MnNpASaPZt0bERHL/Ed7F/Jd3xU6PeoX86tqYjxhgeya2eYaWnc/Wn1GL7mP8u9DksBsu0I2tp9DqBnG7/CfC8jYz2TFpPA+CwJzVsLsvlf7O6G4E8GR5FqfuZcuJNUO9AXnT7CFqwCPNiDWO5FkKLo6Y3IkwXyYnK4lDImfc1BMYLNDpxvDuUM2epao4vMsW3DY+3qFI8OdSg5ieT1oNessB0b4JeOfrZFEjeD+43zKWmH7bCCFIOqXj1uvYPF216yCiCxh</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>'
+$script:launcherUpdated = $false
+function Update-Launcher($remote, $wc) {
+    # The launcher sits outside "files": versions before 1.0.3 refuse a manifest that lists a file they don't know.
+    # It is checked on every start, so PCs that update from an old version still get it on the next run.
+    $l = $remote.launcher
+    if (-not $l -or $l.path -ne 'launcher.exe' -or -not $l.sha256) { return }
+    $exe = Join-Path $Root '모드팩서버관리.exe'
+    $want = ([string]$l.sha256).ToUpper()
+    if ((Test-Path -LiteralPath $exe) -and (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -eq $want) { return }
+    $tmp = "$exe.download"; $old = "$exe.old"
+    try { $wc.DownloadFile("$UpdateBase/program/launcher.exe", $tmp) } catch { return }
+    if ((Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash -ne $want) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue; return }
+    try {
+        # Renaming works even while Windows still holds the old file, so swap by renaming
+        if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $exe) { Move-Item -LiteralPath $exe -Destination $old -Force }
+        Move-Item -LiteralPath $tmp -Destination $exe -Force
+        Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
+        $script:launcherUpdated = $true
+    }
+    catch {
+        if (-not (Test-Path -LiteralPath $exe) -and (Test-Path -LiteralPath $old)) { Move-Item -LiteralPath $old -Destination $exe -Force }
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
+}
 function Invoke-SelfUpdate {
     # Returns $true when newer program files were installed and the manager should restart
     if ($env:MCSM_NO_UPDATE) { return $false }
@@ -112,6 +137,7 @@ function Invoke-SelfUpdate {
     $rsa.FromXmlString($UpdatePublicKey)
     if (-not $rsa.VerifyData($bytes, 'SHA256', $sig)) { return $false }   # not signed by us: ignore it
     try { $remote = [Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json } catch { return $false }
+    Update-Launcher $remote $wc
     try { if ([version]$remote.version -le [version]$AppVersion) { return $false } } catch { return $false }
     $stage = Join-Path $Prog 'update-staging'
     New-Item -ItemType Directory -Force $stage | Out-Null
@@ -127,7 +153,19 @@ function Invoke-SelfUpdate {
     [IO.File]::WriteAllText((Join-Path $Prog 'updated-notice.txt'), "$AppVersion → $($remote.version)`r`n`r`n$($remote.notes)", $Utf8)
     return $true
 }
-if (Invoke-SelfUpdate) {
+$updated = Invoke-SelfUpdate
+# Packages from before the launcher existed still have the .bat; once the .exe is here, retire the .bat
+$legacyBat = Join-Path $Root '모드팩서버관리.bat'
+$script:retiredBat = $false
+if ((Test-Path -LiteralPath (Join-Path $Root '모드팩서버관리.exe')) -and (Test-Path -LiteralPath $legacyBat)) {
+    try {
+        $keep = Join-Path $Prog 'old-launcher'; New-Item -ItemType Directory -Force $keep | Out-Null
+        Move-Item -LiteralPath $legacyBat -Destination $keep -Force
+        $script:retiredBat = $true
+    }
+    catch { }
+}
+if ($updated) {
     # Restart through the launcher so the new version also opens without a console window
     $script:instanceMutex.ReleaseMutex(); $script:instanceMutex.Dispose()
     $exe = Join-Path $Root '모드팩서버관리.exe'
@@ -1390,6 +1428,9 @@ $form.Add_Shown({
         if (Test-Path -LiteralPath $notice) {
             Show-Msg ("프로그램을 새 버전으로 업데이트했어요.`n`n" + [IO.File]::ReadAllText($notice))
             Remove-Item -LiteralPath $notice -ErrorAction SilentlyContinue
+        }
+        if ($script:retiredBat) {
+            Show-Msg "이제부터는 폴더의 '모드팩서버관리.exe'로 프로그램을 켜 주세요.`n검은 창 없이 바로 열려요. (예전 모드팩서버관리.bat 은 정리했어요)"
         }
     })
 

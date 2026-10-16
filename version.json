@@ -1,11 +1,11 @@
 {
-    "version":  "1.0.2",
+    "version":  "1.0.3",
     "date":  "2026-10-16",
-    "notes":  "검은 창 없이 프로그램 안에서 모든 작업을 해요. 서버 설정, 백업/되돌리기, 월드 새로 만들기 기능이 생겼고, 프로그램이 갑자기 꺼져도 서버를 안전하게 정리해요.",
+    "notes":  "실행 파일(모드팩서버관리.exe)도 자동으로 업데이트돼요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "958b9920ea0491db6e45c351286dcc0043d201f48ddd748a55fe22bcbc8b6837"
+                      "sha256":  "b6bbecb66145759ae90ce9146eeb90d572210812fc692b6c35158e67804a0d52"
                   },
                   {
                       "path":  "install.ps1",
@@ -25,7 +25,11 @@
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "bfec2e34583ada7e6af2cb73993fb75a3f7147a6c943e5ff5f5c4294fc577b90"
+                      "sha256":  "20d2cb096d1ab41a4140246d12f07bf6b8cb743fd48122b72532c03d44c5c14a"
                   }
-              ]
+              ],
+    "launcher":  {
+                     "path":  "launcher.exe",
+                     "sha256":  "114a807d21375699885b6b5ee8818c3e941ffbc78d958d8b6260663faa451cfb"
+                 }
 }
