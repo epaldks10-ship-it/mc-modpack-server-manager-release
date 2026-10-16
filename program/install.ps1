@@ -488,14 +488,14 @@ echo.
 echo   (모드팩서버관리.bat 으로 켜면 진행 상황이 보이고 더 편해요)
 echo.
 set "PLAYIT_KEY="
-if exist "%PROG%\playit\secret-key.txt" set /p PLAYIT_KEY=<"%PROG%\playit\secret-key.txt"
+if exist "%PROG%\playit\secret-key.dpapi" for /f "usebackq delims=" %%k in (``powershell -NoProfile -Command "Add-Type -AssemblyName System.Security; try { [Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String([IO.File]::ReadAllText('%PROG%\playit\secret-key.dpapi').Trim()), [Text.Encoding]::UTF8.GetBytes('mcsm-playit'), 'CurrentUser')) } catch { }"``) do set "PLAYIT_KEY=%%k"
 if not exist "%PROG%\playit\playit.exe" goto noplayit
 if "%PLAYIT_KEY%"=="" goto nokey
 tasklist /FI "IMAGENAME eq playit.exe" | find /I "playit.exe" >nul
 if errorlevel 1 start "playit - 이 창도 닫지 마세요" /min "%PROG%\playit\playit.exe" --secret %PLAYIT_KEY% --socket-path \\.\pipe\playitd-mcserver -l "%PROG%\playit\playit.log"
 goto run
 :nokey
-echo [주의] Playit 연결 설정이 안 돼 있어요. 모드팩서버관리.bat 의 [Playit 연결 설정]을 먼저 해 주세요.
+echo [주의] Playit 키가 없거나 이 PC에서 풀 수 없어요. 모드팩서버관리.bat 의 [Playit 연결 설정]에서 키를 넣어 주세요.
 echo        지금은 이 컴퓨터에서 localhost 로만 들어갈 수 있어요.
 echo.
 goto run

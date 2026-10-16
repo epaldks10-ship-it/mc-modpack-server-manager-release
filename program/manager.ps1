@@ -47,7 +47,10 @@ $Prog = $PSScriptRoot
 $Root = Split-Path $Prog -Parent
 $ServersDir = Join-Path $Root 'servers'
 $PlayitDir = Join-Path $Prog 'playit'
-$PlayitKeyFile = Join-Path $PlayitDir 'secret-key.txt'
+$PlayitKeyFile = Join-Path $PlayitDir 'secret-key.dpapi'      # encrypted for this Windows user on this PC
+$PlayitKeyPlain = Join-Path $PlayitDir 'secret-key.txt'       # older plain-text form, converted on first start
+Add-Type -AssemblyName System.Security
+$KeyEntropy = [Text.Encoding]::UTF8.GetBytes('mcsm-playit')
 $PlayitLog = Join-Path $PlayitDir 'playit.log'
 $Cp949 = [Text.Encoding]::GetEncoding(949)
 $Utf8 = New-Object Text.UTF8Encoding($false)
@@ -434,7 +437,9 @@ function Start-Server([switch]$Local) {
 
     if (-not $Local) {
         if (-not (Get-PlayitKey)) {
-            if (-not (Ask-YesNo "Playit 연결 설정이 아직 안 돼 있어서 친구들은 들어올 수 없어요.`n(나는 localhost 로 들어갈 수 있어요)`n`n그래도 켤까요?")) { return }
+            $why = 'Playit 연결 설정이 아직 안 돼 있어서'
+            if ($script:playitKeyForeign) { $why = '다른 PC에서 옮겨 와서 Playit 키를 이 PC에서 한 번 다시 넣어야 해서' }
+            if (-not (Ask-YesNo "$why 친구들은 들어올 수 없어요.`n([Playit 연결 설정]에서 넣을 수 있어요. 나는 localhost 로 들어갈 수 있어요)`n`n그래도 켤까요?")) { return }
         }
         Start-Playit
     }
@@ -610,7 +615,30 @@ $btnRamSrv.Add_Click({
 
 # ---------------- Playit ----------------
 $script:playit = $null
-function Get-PlayitKey { if (Test-Path -LiteralPath $PlayitKeyFile) { return ([IO.File]::ReadAllText($PlayitKeyFile)).Trim() } return '' }
+$script:playitKeyForeign = $false
+function Save-PlayitKey([string]$key) {
+    # DPAPI ties the key to this Windows account on this PC: a copied folder is useless to anyone else
+    $enc = [Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($key), $KeyEntropy, 'CurrentUser')
+    New-Item -ItemType Directory -Force $PlayitDir | Out-Null
+    [IO.File]::WriteAllText($PlayitKeyFile, [Convert]::ToBase64String($enc), $Utf8)
+    $script:playitKeyForeign = $false
+}
+function Get-PlayitKey {
+    if (Test-Path -LiteralPath $PlayitKeyFile) {
+        try {
+            $raw = [Convert]::FromBase64String(([IO.File]::ReadAllText($PlayitKeyFile)).Trim())
+            $script:playitKeyForeign = $false
+            return [Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect($raw, $KeyEntropy, 'CurrentUser'))
+        }
+        catch { $script:playitKeyForeign = $true; return '' }   # encrypted on another PC or Windows account
+    }
+    return ''
+}
+if (Test-Path -LiteralPath $PlayitKeyPlain) {
+    $k = ([IO.File]::ReadAllText($PlayitKeyPlain)).Trim()
+    if ($k) { Save-PlayitKey $k }
+    Remove-Item -LiteralPath $PlayitKeyPlain -Force
+}
 function Start-Playit {
     $exe = Join-Path $PlayitDir 'playit.exe'
     $key = Get-PlayitKey
@@ -622,7 +650,12 @@ function Start-Playit {
 function Update-PlayitLabel {
     $exe = Join-Path $PlayitDir 'playit.exe'
     if (-not (Test-Path -LiteralPath $exe)) { $lblPlayit.ForeColor = [Drawing.Color]::Firebrick; $lblPlayit.Text = "Playit: 프로그램 파일이 없어요`n(_program\playit\playit.exe)"; return }
-    if (-not (Get-PlayitKey)) { $lblPlayit.ForeColor = [Drawing.Color]::DarkOrange; $lblPlayit.Text = "Playit: 연결 안 됨`n친구들이 들어오려면 [Playit 연결 설정]을 먼저 해 주세요."; return }
+    if (-not (Get-PlayitKey)) {
+        $lblPlayit.ForeColor = [Drawing.Color]::DarkOrange
+        if ($script:playitKeyForeign) { $lblPlayit.Text = "Playit: 이 PC에서 키를 한 번 다시 넣어 주세요`n(다른 PC에서 옮겨 와서 그래요)" }
+        else { $lblPlayit.Text = "Playit: 연결 안 됨`n친구들이 들어오려면 [Playit 연결 설정]을 먼저 해 주세요." }
+        return
+    }
     if ($script:playit -and $script:playit.Running) {
         $last = ''
         try { $last = (Get-Content -LiteralPath $PlayitLog -Tail 1 -ErrorAction Stop) -replace '^\S+\s+(INFO|WARN|ERROR)\s+\S+:\s*', '' } catch { }
@@ -645,14 +678,13 @@ function Show-PlayitSetup {
     $s3 = New-Ctl Label 15 220 600 44 "③ playit.gg 의 Tunnels(터널) 메뉴에서 [Add Tunnel] 을 누르고`n    종류 Minecraft Java, 주소 127.0.0.1, 포트 25565 로 터널을 만드세요."
     $b3 = New-Ctl Button 15 268 300 34 '터널 페이지 열기'
     $s4 = New-Ctl Label 15 315 600 44 "④ 터널 목록에 나온 주소(예: 어쩌구.joinmc.link)를 친구들에게 알려 주세요.`n    이 주소는 바뀌지 않아요."
-    $warn = New-Ctl Label 15 365 600 44 '비밀 키는 비밀번호 같은 거예요. 다른 사람에게 보여 주거나 보내지 마세요.'; $warn.ForeColor = [Drawing.Color]::Firebrick
+    $warn = New-Ctl Label 15 365 600 60 "비밀 키는 비밀번호 같은 거예요. 다른 사람에게 보여 주거나 보내지 마세요.`n저장한 키는 이 PC에서만 풀리게 암호화돼요. 다른 PC로 옮기면 한 번 다시 넣어야 해요."; $warn.ForeColor = [Drawing.Color]::Firebrick
     $b1.Add_Click({ Open-Url 'https://playit.gg/account/setup/wizard/new-account/docker/docker-name' })
     $b3.Add_Click({ Open-Url 'https://playit.gg/account/tunnels' })
     $bs.Add_Click({
             $k = $tk.Text.Trim()
             if ($k.Length -lt 16 -or $k -match '\s') { Show-Msg '비밀 키가 올바르지 않은 것 같아요. 다시 복사해서 붙여 넣어 주세요.'; return }
-            New-Item -ItemType Directory -Force $PlayitDir | Out-Null
-            [IO.File]::WriteAllText($PlayitKeyFile, $k, $Utf8)
+            Save-PlayitKey $k
             if ($script:playit) { $script:playit.Kill(); $script:playit = $null }
             if ($script:srv) { Start-Playit }
             Update-PlayitLabel
@@ -841,7 +873,8 @@ function Get-SecurityReport($d) {
     $opNames = ($ops | ForEach-Object { $_.name }) -join ', '
     Add-Item ($ops.Count -le 3) "관리자(OP) $($ops.Count)명" "관리자는 서버를 마음대로 바꿀 수 있어요. 믿을 수 있는 사람만 두세요. $opNames"
     $cloud = $Root -match '(?i)OneDrive|Dropbox|Google ?Drive|iCloud|MEGA'
-    Add-Item (-not $cloud) '클라우드 동기화 폴더 아님' "프로그램 폴더가 클라우드 동기화 폴더 안에 있으면 Playit 비밀 키가 인터넷에 올라가요. 지금 위치: $Root"
+    Add-Item (-not $cloud) '클라우드 동기화 폴더 아님' "프로그램 폴더가 클라우드 동기화 폴더 안에 있으면 월드와 서버 파일이 인터넷에 올라가요. 지금 위치: $Root"
+    Add-Item (-not (Test-Path -LiteralPath $PlayitKeyPlain)) 'Playit 비밀 키 암호화' '키를 이 PC에서만 풀리게 암호화해서 저장해요. 폴더가 새어 나가도 남이 키를 쓸 수 없어요.'
     $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     Add-Item (-not $admin) '관리자 권한으로 실행 안 함' '서버를 관리자 권한으로 돌리면, 모드에 문제가 있을 때 컴퓨터 전체가 위험해져요. 그냥 더블클릭해서 실행하세요.'
     $fw = $null
@@ -893,7 +926,7 @@ function Show-Security {
  - 서버 주소를 유튜브, 디스코드 공개 채널, 커뮤니티에 올리지 마세요.
 
 [ 계정과 파일 ]
- - Playit 비밀 키(_program\playit\secret-key.txt)는 비밀번호예요. 이 폴더를 남에게 주거나 클라우드에 올리지 마세요.
+ - Playit 비밀 키는 이 PC의 이 Windows 계정에서만 풀리게 암호화해서 저장해요. 그래도 폴더를 남에게 주거나 클라우드에 올리지 마세요.
  - 비밀 키가 새어 나간 것 같으면 playit.gg 에서 그 에이전트를 지우고 키를 새로 만드세요.
  - playit.gg 계정과 마인크래프트(마이크로소프트) 계정에는 2단계 인증을 켜 두세요.
 

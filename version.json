@@ -1,15 +1,15 @@
 {
-    "version":  "1.0.0",
+    "version":  "1.0.1",
     "date":  "2026-10-16",
-    "notes":  "첫 배포 버전이에요.",
+    "notes":  "Playit 비밀 키를 이 PC에서만 풀리게 암호화해요. 서버가 내 PC 안에서만 접속을 받아서 더 안전해졌어요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "ae59daedd060c4cc9eb233de7cbdfe5b1bb2e6b3d8f9711438829a3e63506402"
+                      "sha256":  "88f90dc4a3d4c89e1af04b4ac870572fa41633070daa1be6a25d9554b324de15"
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "cfe559e1fa5bbed36ff174ec9889552c12b56400553f3cebb4a86040fbf3812b"
+                      "sha256":  "17d3fe4b7b9f97c87f241bebec5bdb9857bbf248c1b746dae7f8baad7cabfa42"
                   },
                   {
                       "path":  "packs.json",
@@ -21,11 +21,11 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "86551b59690a1623cf2f5c4b07749225585efd72b951d238de8129d1fc051231"
+                      "sha256":  "f87b293d5a5d9251e3503455b85dea0c8c96a601d8962e219d6eddbcc6e416f8"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "92521fc3cbd964bdc9f584a991b89fddaa5754ed1cc96d6d42445338669c1305"
+                      "sha256":  "d51e6ec94058554a84558a5b402ee6ef5fdf5455e35c902feda61cda8752943a"
                   }
               ]
 }
