@@ -575,7 +575,7 @@ function Update-UpdateButton {
     $i = Read-Json (Join-Path $d 'server-info.json'); if (-not $i -or -not $i.pack) { return }
     try { $t = Get-UpdateTarget $i } catch { $btnUpdate.Text = '업데이트 확인 실패 (인터넷 확인)'; return }
     if ($t) {
-        $btnUpdate.Text = "모드팩 업데이트: $($t.label) 있음!"; $btnUpdate.BackColor = [Drawing.Color]::Gold; $btnUpdate.Tag = $t
+        $btnUpdate.Text = "새 버전 있음: $($t.label)"; if ($t.label.Length -gt 12) { $btnUpdate.Text = '새 버전 있음! (눌러서 보기)' }; $btnUpdate.BackColor = [Drawing.Color]::Gold; $btnUpdate.Tag = $t
         $btnUpdate.Enabled = -not $script:srv -and -not $script:installProc
     }
     else { $btnUpdate.Text = '모드팩이 최신 버전이에요' }
@@ -607,27 +607,27 @@ $btnPlayit = New-Ctl Button 10 384 235 34 'Playit 연결 설정'
 $btnSecurity = New-Ctl Button 10 422 235 34 '보안 점검'
 $btnUpdate = New-Ctl Button 10 460 235 34 '모드팩 업데이트 확인'
 $btnFolder = New-Ctl Button 10 498 235 34 '서버 폴더 열기'
-$lblPlayit = New-Ctl Label 10 536 235 50 ''
-$btnCopyAddr = New-Ctl Button 10 588 235 30 '친구에게 줄 주소 복사'
+$lblPlayit = New-Ctl Label 10 535 235 58 ''
+$btnCopyAddr = New-Ctl Button 10 594 235 30 '친구에게 줄 주소 복사'
 
 $lblState = New-Ctl Label 260 35 695 48 '● 꺼짐'
 $lblState.Font = $big; $lblState.ForeColor = [Drawing.Color]::White; $lblState.BackColor = [Drawing.Color]::Gray; $lblState.TextAlign = 'MiddleLeft'
 $prg = New-Object Windows.Forms.ProgressBar; $prg.Location = New-Object Drawing.Point(260, 88); $prg.Size = New-Object Drawing.Size(695, 18); $prg.Style = 'Continuous'
-$lblStage = New-Ctl Label 260 110 695 24 ''
-$lblSrvInfo = New-Ctl Label 260 136 455 44 ''; $lblSrvInfo.ForeColor = [Drawing.Color]::DimGray
-$lblRamSrv = New-Ctl Label 720 140 80 22 '서버 램(GB)'
-$numRamSrv = New-Ctl NumericUpDown 800 137 55 28; $numRamSrv.Minimum = 2; $numRamSrv.Maximum = [Math]::Max(2, $totalRam - 2)
-$btnRamSrv = New-Ctl Button 860 135 95 30 '램 바꾸기'
-$btnStart = New-Ctl Button 260 184 160 42 '▶ 친구랑 하기'; $btnStart.Font = $bold
-$btnLocal = New-Ctl Button 426 184 150 42 '▶ 혼자 하기'; $btnLocal.Font = $bold
-$btnStop = New-Ctl Button 582 184 150 42 '■ 서버 끄기'; $btnStop.Font = $bold; $btnStop.Enabled = $false
-$btnAddFriend = New-Ctl Button 738 184 120 42 '친구 추가'
-$lblPlayers = New-Ctl Label 862 184 93 42 '접속 0명'; $lblPlayers.TextAlign = 'MiddleCenter'; $lblPlayers.Font = $bold
+$lblStage = New-Ctl Label 260 110 695 40 ''
+$lblSrvInfo = New-Ctl Label 260 152 455 60 ''; $lblSrvInfo.AutoEllipsis = $true; $lblSrvInfo.ForeColor = [Drawing.Color]::DimGray
+$lblRamSrv = New-Ctl Label 718 158 90 22 '서버 램(GB)'
+$numRamSrv = New-Ctl NumericUpDown 808 155 50 28; $numRamSrv.Minimum = 2; $numRamSrv.Maximum = [Math]::Max(2, $totalRam - 2)
+$btnRamSrv = New-Ctl Button 862 153 93 30 '램 바꾸기'
+$btnStart = New-Ctl Button 260 216 160 42 '▶ 친구랑 하기'; $btnStart.Font = $bold
+$btnLocal = New-Ctl Button 426 216 150 42 '▶ 혼자 하기'; $btnLocal.Font = $bold
+$btnStop = New-Ctl Button 582 216 150 42 '■ 서버 끄기'; $btnStop.Font = $bold; $btnStop.Enabled = $false
+$btnAddFriend = New-Ctl Button 738 216 110 42 '친구 추가'
+$lblPlayers = New-Ctl Label 852 216 103 42 '접속 0명'; $lblPlayers.TextAlign = 'MiddleCenter'; $lblPlayers.Font = $bold
 $tip = New-Object Windows.Forms.ToolTip
 $tip.SetToolTip($btnStart, '서버를 열고 Playit으로 친구들이 들어올 수 있게 해요.')
 $tip.SetToolTip($btnLocal, '같은 월드를 내 컴퓨터에서만 열어요. 마인크래프트에서 127.0.0.1 로 접속하세요.')
 $tip.SetToolTip($btnAddFriend, '화이트리스트에 닉네임을 추가해요. 나도 처음 한 번 추가해야 해요.')
-$txtConsole = New-Ctl TextBox 260 232 695 340
+$txtConsole = New-Ctl TextBox 260 264 695 308
 $txtConsole.Multiline = $true; $txtConsole.ReadOnly = $true; $txtConsole.ScrollBars = 'Vertical'; $txtConsole.WordWrap = $false
 $txtConsole.Font = $mono; $txtConsole.BackColor = [Drawing.Color]::FromArgb(24, 24, 24); $txtConsole.ForeColor = [Drawing.Color]::Gainsboro
 $txtCmd = New-Ctl TextBox 260 580 590 28
@@ -1054,8 +1054,8 @@ function Update-PlayitLabel {
     if (-not (Test-Path -LiteralPath $exe)) { $lblPlayit.ForeColor = [Drawing.Color]::Firebrick; $lblPlayit.Text = "Playit: 프로그램 파일이 없어요`n(_program\playit\playit.exe)"; return }
     if (-not (Get-PlayitKey)) {
         $lblPlayit.ForeColor = [Drawing.Color]::DarkOrange
-        if ($script:playitKeyForeign) { $lblPlayit.Text = "Playit: 이 PC에서 키를 한 번 다시 넣어 주세요`n(다른 PC에서 옮겨 와서 그래요)" }
-        else { $lblPlayit.Text = "Playit: 연결 안 됨`n친구들이 들어오려면 [Playit 연결 설정]을 먼저 해 주세요." }
+        if ($script:playitKeyForeign) { $lblPlayit.Text = "Playit: 키를 한 번 다시 넣어 주세요`n(다른 PC에서 옮겨 와서 그래요)" }
+        else { $lblPlayit.Text = "Playit: 연결 안 됨`n친구랑 하려면 [Playit 연결 설정]부터" }
         return
     }
     if ($script:playit -and $script:playit.Running) {
@@ -1077,7 +1077,7 @@ $btnCopyAddr.Add_Click({
 
 function Show-PlayitSetup {
     $f = New-Object Windows.Forms.Form
-    $f.Text = 'Playit 연결 설정'; $f.Size = New-Object Drawing.Size(640, 530); $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.Font = $font
+    $f.Text = 'Playit 연결 설정'; $f.Size = New-Object Drawing.Size(640, 556); $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.Font = $font
     $t = New-Ctl Label 15 12 600 60 "Playit은 친구들이 들어올 인터넷 주소를 만들어 주는 무료 서비스예요.`n아래 순서대로 한 번만 하면 돼요."
     $s1 = New-Ctl Label 15 80 600 24 '① playit.gg 에 로그인(가입)한 뒤, 아래 버튼으로 "비밀 키(Secret Key)"를 만드세요.'
     $b1 = New-Ctl Button 15 106 300 34 '비밀 키 만드는 페이지 열기'
@@ -1086,10 +1086,10 @@ function Show-PlayitSetup {
     $bs = New-Ctl Button 505 176 105 32 '저장'
     $s3 = New-Ctl Label 15 220 600 44 "③ playit.gg 의 Tunnels(터널) 메뉴에서 [Add Tunnel] 을 누르고`n    종류 Minecraft Java, 주소 127.0.0.1, 포트 25565 로 터널을 만드세요."
     $b3 = New-Ctl Button 15 268 300 34 '터널 페이지 열기'
-    $s4 = New-Ctl Label 15 315 600 44 "④ 터널 목록에 나온 주소(예: 어쩌구.joinmc.link)를 복사해서 아래 칸에 붙여 넣고 [저장]을 누르세요.`n    주소는 바뀌지 않아요. 친구 접속 안내와 화면에 자동으로 넣어 줘요."
-    $ta = New-Ctl TextBox 15 362 480 28; $ta.Text = Get-PlayitAddress
-    $ba = New-Ctl Button 505 360 105 32 '저장'
-    $warn = New-Ctl Label 15 412 600 60 "비밀 키는 비밀번호 같은 거예요. 다른 사람에게 보여 주거나 보내지 마세요.`n저장한 키는 이 PC에서만 풀리게 암호화돼요. 다른 PC로 옮기면 한 번 다시 넣어야 해요."; $warn.ForeColor = [Drawing.Color]::Firebrick
+    $s4 = New-Ctl Label 15 315 600 64 "④ 터널 목록의 주소(예: 어쩌구.joinmc.link)를 복사해서 아래 칸에 넣고 [저장]을 누르세요.`n    주소는 바뀌지 않아요. 친구 접속 안내와 화면에 자동으로 들어가요."
+    $ta = New-Ctl TextBox 15 384 480 28; $ta.Text = Get-PlayitAddress
+    $ba = New-Ctl Button 505 382 105 32 '저장'
+    $warn = New-Ctl Label 15 434 600 60 "비밀 키는 비밀번호 같은 거예요. 다른 사람에게 보여 주거나 보내지 마세요.`n저장한 키는 이 PC에서만 풀리게 암호화돼요. 다른 PC로 옮기면 한 번 다시 넣어야 해요."; $warn.ForeColor = [Drawing.Color]::Firebrick
     $b1.Add_Click({ Open-Url 'https://playit.gg/account/setup/wizard/new-account/docker/docker-name' })
     $b3.Add_Click({ Open-Url 'https://playit.gg/account/tunnels' })
     $bs.Add_Click({
@@ -1325,10 +1325,10 @@ function Get-SecurityReport($d) {
     $opNames = ($ops | ForEach-Object { $_.name }) -join ', '
     Add-Item ($ops.Count -le 3) "관리자(OP) $($ops.Count)명" "관리자는 서버를 마음대로 바꿀 수 있어요. 믿을 수 있는 사람만 두세요. $opNames"
     $cloud = $Root -match '(?i)OneDrive|Dropbox|Google ?Drive|iCloud|MEGA'
-    Add-Item (-not $cloud) '클라우드 동기화 폴더 아님' "프로그램 폴더가 클라우드 동기화 폴더 안에 있으면 월드와 서버 파일이 인터넷에 올라가요. 지금 위치: $Root"
+    Add-Item (-not $cloud) '클라우드 동기화 폴더 아님' "클라우드 동기화 폴더 안이면 월드와 서버 파일이 인터넷에 올라가요. 프로그램 폴더 위치: $Root"
     Add-Item (-not (Test-Path -LiteralPath $PlayitKeyPlain)) 'Playit 비밀 키 암호화' '키를 이 PC에서만 풀리게 암호화해서 저장해요. 폴더가 새어 나가도 남이 키를 쓸 수 없어요.'
     $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    Add-Item (-not $admin) '관리자 권한으로 실행 안 함' '서버를 관리자 권한으로 돌리면, 모드에 문제가 있을 때 컴퓨터 전체가 위험해져요. 그냥 더블클릭해서 실행하세요.'
+    Add-Item (-not $admin) '관리자 권한으로 실행 안 함' '관리자 권한으로 돌리면 모드 문제가 컴퓨터 전체로 번질 수 있어요. 그냥 더블클릭해서 실행하세요.'
     $fw = $null
     try {
         $javaDir = Join-Path $Prog 'java'
@@ -1336,7 +1336,7 @@ function Get-SecurityReport($d) {
             Where-Object { $_.Enabled -eq 'True' -and $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow' -and ($_.Profile -match 'Public|Any') })
     }
     catch { }
-    if ($null -ne $fw) { Add-Item ($fw.Count -eq 0) '방화벽: 공용 네트워크에 서버가 안 열림' 'Playit을 쓰면 방화벽을 열 필요가 없어요. 카페 와이파이 같은 공용 네트워크에서 서버가 노출되지 않게, 처음 뜨는 방화벽 허용 창은 [취소]를 누르세요. 이미 허용했다면 제어판 → Windows Defender 방화벽 → 앱 허용에서 OpenJDK의 "공용" 체크를 끄세요.' }
+    if ($null -ne $fw) { Add-Item ($fw.Count -eq 0) '방화벽: 공용 네트워크에 안 열림' 'Playit을 쓰면 방화벽을 열 필요가 없어요. 카페 와이파이 같은 공용 네트워크에서 서버가 노출되지 않게, 처음 뜨는 방화벽 허용 창은 [취소]를 누르세요. 이미 허용했다면 제어판 → Windows Defender 방화벽 → 앱 허용에서 OpenJDK의 "공용" 체크를 끄세요.' }
     return $r
 }
 
@@ -1363,12 +1363,15 @@ function Repair-Security($d, $report) {
 function Show-Security {
     $d = Get-SelDir; if (-not $d) { Show-Msg '왼쪽 목록에서 서버를 고르세요.'; return }
     $f = New-Object Windows.Forms.Form
-    $f.Text = "보안 점검 - $($lstSrv.SelectedItem)"; $f.Size = New-Object Drawing.Size(900, 660); $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.Font = $font
-    $lv = New-Object Windows.Forms.ListView; $lv.Location = New-Object Drawing.Point(15, 15); $lv.Size = New-Object Drawing.Size(855, 250); $lv.View = 'Details'; $lv.FullRowSelect = $true; $lv.Font = $font
-    [void]$lv.Columns.Add('결과', 70); [void]$lv.Columns.Add('항목', 250); [void]$lv.Columns.Add('설명', 520)
+    $f.Text = "보안 점검 - $($lstSrv.SelectedItem)"; $f.Size = New-Object Drawing.Size(1000, 660); $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.Font = $font
+    $lv = New-Object Windows.Forms.ListView; $lv.Location = New-Object Drawing.Point(15, 15); $lv.Size = New-Object Drawing.Size(955, 196); $lv.View = 'Details'; $lv.FullRowSelect = $true; $lv.Font = $font; $lv.ShowItemToolTips = $true; $lv.HideSelection = $false
+    [void]$lv.Columns.Add('결과', 84); [void]$lv.Columns.Add('항목', 270); [void]$lv.Columns.Add('설명', 578)
+    # The list cuts long explanations short; the full one for the chosen row is shown underneath
+    $ldet = New-Ctl Label 15 214 955 54 ''; $ldet.ForeColor = [Drawing.Color]::FromArgb(40, 40, 40)
+    $lv.Add_SelectedIndexChanged({ if ($lv.SelectedItems.Count) { $s = $lv.SelectedItems[0]; $ldet.Text = "$($s.SubItems[1].Text): $($s.ToolTipText)" } })
     $bfix = New-Ctl Button 15 272 300 36 '고칠 수 있는 것 자동으로 고치기'
-    $lnote = New-Ctl Label 325 278 545 24 ''; $lnote.ForeColor = [Drawing.Color]::DimGray
-    $tips = New-Ctl TextBox 15 318 855 250; $tips.Multiline = $true; $tips.ReadOnly = $true; $tips.ScrollBars = 'Vertical'; $tips.BackColor = [Drawing.Color]::White
+    $lnote = New-Ctl Label 325 278 645 24 ''; $lnote.ForeColor = [Drawing.Color]::DimGray
+    $tips = New-Ctl TextBox 15 318 955 250; $tips.Multiline = $true; $tips.ReadOnly = $true; $tips.ScrollBars = 'Vertical'; $tips.BackColor = [Drawing.Color]::White
     $bTun = New-Ctl Button 15 575 270 36 'playit.gg 터널 페이지 열기'
     $bGuide = New-Ctl Button 295 575 270 36 '친구 접속 안내 열기'
     $bTun.Add_Click({ Open-Url 'https://playit.gg/account/tunnels' })
@@ -1405,15 +1408,20 @@ function Show-Security {
 "@
     # A TextBox only breaks lines on CRLF; this script file is saved with LF
     $tips.Text = $tips.Text -replace "`r?`n", "`r`n"
-    $f.Controls.AddRange(@($lv, $bfix, $lnote, $tips, $bTun, $bGuide))
+    $f.Controls.AddRange(@($lv, $ldet, $bfix, $lnote, $tips, $bTun, $bGuide))
     $fill = {
         $lv.Items.Clear(); $script:secReport = Get-SecurityReport $d; $bad = 0
         foreach ($it in $script:secReport) {
             $mark = '✔ 안전'; if (-not $it.ok) { $mark = '⚠ 확인'; $bad++ }
-            $row = New-Object Windows.Forms.ListViewItem($mark); [void]$row.SubItems.Add($it.title); [void]$row.SubItems.Add($it.detail)
+            # The list shows the first sentence; the label under it shows all of it
+            $first1 = ($it.detail -split '(?<=[.요다])\s+', 2)[0]
+            $row = New-Object Windows.Forms.ListViewItem($mark); [void]$row.SubItems.Add($it.title); [void]$row.SubItems.Add($first1)
             if (-not $it.ok) { $row.ForeColor = [Drawing.Color]::Firebrick }
+            $row.ToolTipText = $it.detail
             [void]$lv.Items.Add($row)
         }
+        # Start on the first item that needs attention (or the first one), so its full explanation is visible right away
+        if ($lv.Items.Count) { $first = @($lv.Items | Where-Object { $_.ForeColor -eq [Drawing.Color]::Firebrick }) + @($lv.Items[0]) | Select-Object -First 1; $first.Selected = $true }
         $lnote.Text = "확인이 필요한 항목 $($bad)개"
     }
     $bfix.Add_Click({
@@ -1664,11 +1672,11 @@ function Show-ServerSettings {
     if ($running) { $top.Text = '서버가 켜져 있어서 지금은 볼 수만 있어요. 서버를 끈 다음에 바꿔 주세요.'; $top.ForeColor = [Drawing.Color]::Firebrick }
     $f.Controls.Add($top)
     $y = 55; $ctl = @{}
-    function Row($label) { $l = New-Ctl Label 15 ($script:rowY + 3) 230 24 $label; $f.Controls.Add($l) }
+    function Row($label) { $l = New-Ctl Label 15 ($script:rowY + 3) 255 24 $label; $f.Controls.Add($l) }
     $script:rowY = $y
     function Add-Combo($key, $label, $opts, $def) {
         Row $label
-        $c = New-Ctl ComboBox 250 $script:rowY 330 28; $c.DropDownStyle = 'DropDownList'
+        $c = New-Ctl ComboBox 275 $script:rowY 305 28; $c.DropDownStyle = 'DropDownList'
         foreach ($o in $opts) { [void]$c.Items.Add($o[1]) }
         $cur = $pr[$key]; if (-not $cur) { $cur = $def }
         $idx = 0; for ($i = 0; $i -lt $opts.Count; $i++) { if ($opts[$i][0] -eq $cur) { $idx = $i } }
@@ -1676,7 +1684,7 @@ function Show-ServerSettings {
     }
     function Add-Num($key, $label, $min, $max, $def) {
         Row $label
-        $n = New-Ctl NumericUpDown 250 $script:rowY 90 28; $n.Minimum = $min; $n.Maximum = $max
+        $n = New-Ctl NumericUpDown 275 $script:rowY 90 28; $n.Minimum = $min; $n.Maximum = $max
         $v = $def; if ($pr[$key] -match '^\d+$') { $v = [int]$pr[$key] }; $n.Value = [Math]::Min($max, [Math]::Max($min, $v))
         $f.Controls.Add($n); $ctl[$key] = @{ kind = 'num'; c = $n }; $script:rowY += 36
     }
@@ -1686,7 +1694,7 @@ function Show-ServerSettings {
         $f.Controls.Add($c); $ctl[$key] = @{ kind = 'check'; c = $c }; $script:rowY += 32
     }
     Row '서버 설명 (목록에 보이는 글)'
-    $motd = New-Ctl TextBox 250 $script:rowY 330 28; $motd.Text = $pr['motd']; $f.Controls.Add($motd); $script:rowY += 36
+    $motd = New-Ctl TextBox 275 $script:rowY 305 28; $motd.Text = $pr['motd']; $f.Controls.Add($motd); $script:rowY += 36
     Add-Combo 'difficulty' '난이도' @(@('peaceful', '평화로움 (몬스터 없음)'), @('easy', '쉬움'), @('normal', '보통'), @('hard', '어려움')) 'normal'
     Add-Combo 'gamemode' '처음 들어온 사람의 게임 모드' @(@('survival', '서바이벌'), @('creative', '크리에이티브'), @('adventure', '모험'), @('spectator', '관전')) 'survival'
     Add-Num 'max-players' '최대 인원' 1 100 10
@@ -1911,18 +1919,18 @@ function Read-JoinCode([string]$text) {
 # =====================================================================================
 $lblJ1 = New-Ctl Label 10 10 940 44 "방장(서버를 연 친구)이 보내 준 [친구 접속 안내] 글을 통째로 아래 칸에 붙여 넣으세요.`n글 안의 접속 코드를 보고 같은 모드팩, 같은 버전, 추가 모드까지 알아서 설치해요. CurseForge 앱은 필요 없어요."
 $txtCode = New-Ctl TextBox 10 58 940 84; $txtCode.Multiline = $true; $txtCode.ScrollBars = 'Vertical'
-$lblJInfo = New-Ctl Label 10 148 940 44 '(아직 붙여 넣지 않았어요)'; $lblJInfo.ForeColor = [Drawing.Color]::DimGray
-$lblJAddr = New-Ctl Label 10 200 100 24 '서버 주소'
-$txtJAddr = New-Ctl TextBox 110 197 360 28
-$lblJRam = New-Ctl Label 500 200 110 24 '게임 램(GB)'
-$numJRam = New-Ctl NumericUpDown 610 197 60 28; $numJRam.Minimum = 2; $numJRam.Maximum = [Math]::Max(2, $totalRam - 2); $numJRam.Value = [Math]::Min($numJRam.Maximum, (Get-GameRam 0))
-$btnJoin = New-Ctl Button 10 236 300 48 '▶ 설치하고 게임 켜기'; $btnJoin.Font = $bold; $btnJoin.BackColor = [Drawing.Color]::FromArgb(214, 240, 214)
-$lblJoinWork = New-Ctl Label 320 236 630 48 ''; $lblJoinWork.ForeColor = [Drawing.Color]::DarkGreen
-$lblJList = New-Ctl Label 10 296 400 22 '설치해 둔 친구 서버 (다음부터는 여기서 바로 켜요)'
-$lstJoined = New-Ctl ListBox 10 320 400 210
-$btnJoinAgain = New-Ctl Button 10 536 195 38 '▶ 게임 켜기'; $btnJoinAgain.Font = $bold
-$btnJoinDel = New-Ctl Button 215 536 195 38 '지우기'
-$txtJoinLog = New-Ctl TextBox 420 296 530 320; $txtJoinLog.Multiline = $true; $txtJoinLog.ReadOnly = $true; $txtJoinLog.ScrollBars = 'Vertical'; $txtJoinLog.Font = $mono; $txtJoinLog.BackColor = [Drawing.Color]::White
+$lblJInfo = New-Ctl Label 10 148 940 60 '(아직 붙여 넣지 않았어요)'; $lblJInfo.ForeColor = [Drawing.Color]::DimGray
+$lblJAddr = New-Ctl Label 10 216 100 24 '서버 주소'
+$txtJAddr = New-Ctl TextBox 110 213 360 28
+$lblJRam = New-Ctl Label 500 216 110 24 '게임 램(GB)'
+$numJRam = New-Ctl NumericUpDown 610 213 60 28; $numJRam.Minimum = 2; $numJRam.Maximum = [Math]::Max(2, $totalRam - 2); $numJRam.Value = [Math]::Min($numJRam.Maximum, (Get-GameRam 0))
+$btnJoin = New-Ctl Button 10 252 300 48 '▶ 설치하고 게임 켜기'; $btnJoin.Font = $bold; $btnJoin.BackColor = [Drawing.Color]::FromArgb(214, 240, 214)
+$lblJoinWork = New-Ctl Label 320 252 630 48 ''; $lblJoinWork.ForeColor = [Drawing.Color]::DarkGreen
+$lblJList = New-Ctl Label 10 312 400 22 '설치해 둔 친구 서버 (다음부터는 여기서 바로 켜요)'
+$lstJoined = New-Ctl ListBox 10 336 400 196
+$btnJoinAgain = New-Ctl Button 10 538 195 38 '▶ 게임 켜기'; $btnJoinAgain.Font = $bold
+$btnJoinDel = New-Ctl Button 215 538 195 38 '지우기'
+$txtJoinLog = New-Ctl TextBox 420 312 530 304; $txtJoinLog.Multiline = $true; $txtJoinLog.ReadOnly = $true; $txtJoinLog.ScrollBars = 'Vertical'; $txtJoinLog.Font = $mono; $txtJoinLog.BackColor = [Drawing.Color]::White
 $tabJoin.Controls.AddRange(@($lblJ1, $txtCode, $lblJInfo, $lblJAddr, $txtJAddr, $lblJRam, $numJRam, $btnJoin, $lblJoinWork, $lblJList, $lstJoined, $btnJoinAgain, $btnJoinDel, $txtJoinLog))
 
 $script:joinCode = $null
