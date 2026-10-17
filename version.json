@@ -1,11 +1,11 @@
 {
-    "version":  "1.0.9",
+    "version":  "1.0.10",
     "date":  "2026-10-17",
-    "notes":  "프로그램 곳곳에서 글씨가 잘려 보이던 부분을 모두 고쳤어요(Playit 연결 설정, 서버 설정, 보안 점검, 내 서버 화면, 친구 서버 들어가기 등). 보안 점검은 항목을 고르면 전체 설명이 아래에 나와요.",
+    "notes":  "Playit 비밀 키만 저장하면 친구용 주소를 Playit에서 자동으로 가져와요(주소를 직접 붙여 넣지 않아도 돼요). 친구 쪽 접속 코드에도 주소가 자동으로 들어가요. 친구 서버 목록 글씨 잘림도 고쳤어요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "15ce269f94603f35c6cc4aff4fa9f3a12b1528d77867d6cb5f8dcf7e00fee650"
+                      "sha256":  "fb7e3d65dc02e9cf0ba82f43e80aa1e1ef90ed02caa93fd3cf6049b908ffc67c"
                   },
                   {
                       "path":  "install.ps1",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "42c92e6b3e2ff5835faff3f63f142331bc04449bf06f4d8cf49fd72aafad4dd2"
+                      "sha256":  "87f169197c2c8228d588445970a7dc58e741a2accd3bda039e52afc1cca54ef5"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "d6f917c484e6a48fcf8b90ef09cde0286c3d86e5dead48b42faf0dae94fb2df5"
+                      "sha256":  "aeff856af84f6fd019532674cd9e77aaa9865ccff9f4a412c408323a66753168"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "2939abf0dde4ed428e79f5312e93f8819a6eed559fa6e9913c0fa73394f24d84"
+                     "sha256":  "c27e78f287a27854b3bec8d7993a77f43a63b144d0997723cf5e86a816561f1d"
                  }
 }

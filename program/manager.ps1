@@ -1031,6 +1031,28 @@ function Set-PlayitAddress([string]$a) {
     $btnCopyAddr.Text = '친구에게 줄 주소 복사'; if (-not $a) { $btnCopyAddr.Text = '친구에게 줄 주소 넣기' }
     if ($script:srv -and $script:srv.done -and -not $script:srv.stopping) { Show-OpenBanner $script:srv }
 }
+function Invoke-PlayitRundata([string]$key) {
+    # The same call the Playit agent makes for itself (playit-agent, packages/playitd: POST /v1/agents/rundata)
+    return Invoke-RestMethod -Method Post -Uri 'https://api.playit.gg/v1/agents/rundata' -Headers @{ Authorization = "Agent-Key $key" } -ContentType 'application/json' -Body '{}' -TimeoutSec 5
+}
+function Sync-PlayitAddress {
+    # Asks Playit which address this agent's Minecraft tunnel has, so nobody has to copy it by hand.
+    # note: ok / nokey / badkey / notunnel / pending / offline
+    $key = Get-PlayitKey
+    if (-not $key) { return @{ address = $null; note = 'nokey' } }
+    try { $res = Invoke-PlayitRundata $key } catch {
+        $why = 'offline'; if ("$($_.ErrorDetails.Message)$($_.Exception.Message)" -match 'InvalidAgentKey|401|403') { $why = 'badkey' }
+        return @{ address = $null; note = $why }
+    }
+    if ($res.status -ne 'success') { $why = 'offline'; if ("$($res.data.message)" -match 'InvalidAgentKey') { $why = 'badkey' }; return @{ address = $null; note = $why } }
+    $tunnels = @($res.data.tunnels | ForEach-Object { $_ } | Where-Object { $_ -and -not $_.disabled_reason })
+    $mc = @($tunnels | Where-Object { "$($_.tunnel_type)" -match 'minecraft-java' }) + $tunnels | Select-Object -First 1
+    if (-not $mc) { $n = 'notunnel'; if (@($res.data.pending | ForEach-Object { $_ }).Count) { $n = 'pending' }; return @{ address = $null; note = $n } }
+    $a = ConvertTo-PlayitAddress ([string]$mc.display_address)
+    if (-not $a) { return @{ address = $null; note = 'notunnel' } }
+    if ($a -ne (Get-PlayitAddress)) { Set-PlayitAddress $a }
+    return @{ address = $a; note = 'ok' }
+}
 function Find-PlayitAddressInLog {
     # Playit prints the tunnel address when it connects; joinmc.link / ply.gg are its public tunnel domains
     try { $text = (Get-Content -LiteralPath $PlayitLog -Tail 400 -ErrorAction Stop) -join "`n" } catch { return $null }
@@ -1075,6 +1097,16 @@ $btnCopyAddr.Add_Click({
         $lblStage.Text = "주소를 복사했어요: $a   → 카톡이나 디스코드에 붙여 넣어서 친구에게 보내 주세요."
     })
 
+function Get-PlayitNoteText($r) {
+    switch ($r.note) {
+        'ok' { return "친구용 주소를 Playit에서 가져왔어요: $($r.address)`n[친구 접속 안내]에 자동으로 들어가요." }
+        'nokey' { return '먼저 ② 비밀 키를 저장해 주세요.' }
+        'badkey' { return "Playit이 이 비밀 키를 모른대요.`n① 페이지에서 키를 다시 만들어 복사한 다음 ②에 붙여 넣고 [저장]을 눌러 주세요." }
+        'pending' { return '터널을 만드는 중이래요. 1~2분 뒤에 [자동으로 가져오기]를 눌러 주세요.' }
+        'notunnel' { return "아직 터널이 없어요.`n③ [터널 페이지 열기] → [Add Tunnel] → Minecraft Java, 127.0.0.1, 25565 로 만든 다음 [자동으로 가져오기]를 눌러 주세요." }
+        default { return '지금은 Playit에 연결이 안 돼요. 인터넷을 확인하고 나중에 [자동으로 가져오기]를 눌러 주세요.' }
+    }
+}
 function Show-PlayitSetup {
     $f = New-Object Windows.Forms.Form
     $f.Text = 'Playit 연결 설정'; $f.Size = New-Object Drawing.Size(640, 556); $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.Font = $font
@@ -1086,8 +1118,9 @@ function Show-PlayitSetup {
     $bs = New-Ctl Button 505 176 105 32 '저장'
     $s3 = New-Ctl Label 15 220 600 44 "③ playit.gg 의 Tunnels(터널) 메뉴에서 [Add Tunnel] 을 누르고`n    종류 Minecraft Java, 주소 127.0.0.1, 포트 25565 로 터널을 만드세요."
     $b3 = New-Ctl Button 15 268 300 34 '터널 페이지 열기'
-    $s4 = New-Ctl Label 15 315 600 64 "④ 터널 목록의 주소(예: 어쩌구.joinmc.link)를 복사해서 아래 칸에 넣고 [저장]을 누르세요.`n    주소는 바뀌지 않아요. 친구 접속 안내와 화면에 자동으로 들어가요."
-    $ta = New-Ctl TextBox 15 384 480 28; $ta.Text = Get-PlayitAddress
+    $s4 = New-Ctl Label 15 315 600 64 "④ 친구용 주소는 비밀 키와 터널이 있으면 자동으로 가져와요. (아래 칸)`n    안 되면 터널 목록의 주소(예: 어쩌구.joinmc.link)를 붙여 넣고 [저장]을 누르세요."
+    $ta = New-Ctl TextBox 15 384 330 28; $ta.Text = Get-PlayitAddress
+    $bAuto = New-Ctl Button 355 382 140 32 '자동으로 가져오기'
     $ba = New-Ctl Button 505 382 105 32 '저장'
     $warn = New-Ctl Label 15 434 600 60 "비밀 키는 비밀번호 같은 거예요. 다른 사람에게 보여 주거나 보내지 마세요.`n저장한 키는 이 PC에서만 풀리게 암호화돼요. 다른 PC로 옮기면 한 번 다시 넣어야 해요."; $warn.ForeColor = [Drawing.Color]::Firebrick
     $b1.Add_Click({ Open-Url 'https://playit.gg/account/setup/wizard/new-account/docker/docker-name' })
@@ -1104,7 +1137,8 @@ function Show-PlayitSetup {
                 if ($s.noPlayit -and $script:playit) { $s.noPlayit = $false; if ($s.done -and -not $s.stopping) { Show-OpenBanner $s } }
             }
             Update-PlayitLabel
-            Show-Msg '저장했어요. 서버를 켜면 Playit도 같이 켜져요.'
+            $r = Sync-PlayitAddress; if ($r.address) { $ta.Text = $r.address }
+            Show-Msg ('저장했어요. 서버를 켜면 Playit도 같이 켜져요.' + "`n`n" + (Get-PlayitNoteText $r))
         })
     $ba.Add_Click({
             if (-not $ta.Text.Trim()) { Set-PlayitAddress ''; Update-PlayitLabel; Show-Msg '주소를 지웠어요.'; return }
@@ -1114,7 +1148,8 @@ function Show-PlayitSetup {
             Set-PlayitAddress $a; Update-PlayitLabel
             Show-Msg "저장했어요: $a`n이제 [친구 접속 안내]에 이 주소가 자동으로 들어가요."
         })
-    $f.Controls.AddRange(@($t, $s1, $b1, $s2, $tk, $bs, $s3, $b3, $s4, $ta, $ba, $warn))
+    $bAuto.Add_Click({ $f.Cursor = 'WaitCursor'; $r = Sync-PlayitAddress; $f.Cursor = 'Default'; if ($r.address) { $ta.Text = $r.address }; Update-PlayitLabel; Show-Msg (Get-PlayitNoteText $r) })
+    $f.Controls.AddRange(@($t, $s1, $b1, $s2, $tk, $bs, $s3, $b3, $s4, $ta, $bAuto, $ba, $warn))
     [void]$f.ShowDialog($form)
 }
 
@@ -1734,6 +1769,8 @@ function Show-ServerSettings {
 # ---------------- friend guide (copy to clipboard instead of Notepad) ----------------
 function Show-FriendGuide {
     $d = Get-SelDir; if (-not $d) { return }
+    # The tunnel may have been made (or remade) since: ask Playit before the guide and its join code are written
+    if (Get-PlayitKey) { [void](Sync-PlayitAddress) }
     Update-FriendGuide $d
     $g = Join-Path $d '친구접속안내.txt'
     $text = ''; if (Test-Path -LiteralPath $g) { $text = [IO.File]::ReadAllText($g, $Cp949) }
@@ -1927,7 +1964,7 @@ $numJRam = New-Ctl NumericUpDown 610 213 60 28; $numJRam.Minimum = 2; $numJRam.M
 $btnJoin = New-Ctl Button 10 252 300 48 '▶ 설치하고 게임 켜기'; $btnJoin.Font = $bold; $btnJoin.BackColor = [Drawing.Color]::FromArgb(214, 240, 214)
 $lblJoinWork = New-Ctl Label 320 252 630 48 ''; $lblJoinWork.ForeColor = [Drawing.Color]::DarkGreen
 $lblJList = New-Ctl Label 10 312 400 22 '설치해 둔 친구 서버 (다음부터는 여기서 바로 켜요)'
-$lstJoined = New-Ctl ListBox 10 336 400 196
+$lstJoined = New-Ctl ListBox 10 336 400 196; $lstJoined.HorizontalScrollbar = $true
 $btnJoinAgain = New-Ctl Button 10 538 195 38 '▶ 게임 켜기'; $btnJoinAgain.Font = $bold
 $btnJoinDel = New-Ctl Button 215 538 195 38 '지우기'
 $txtJoinLog = New-Ctl TextBox 420 312 530 304; $txtJoinLog.Multiline = $true; $txtJoinLog.ReadOnly = $true; $txtJoinLog.ScrollBars = 'Vertical'; $txtJoinLog.Font = $mono; $txtJoinLog.BackColor = [Drawing.Color]::White
@@ -1950,7 +1987,8 @@ $txtCode.Add_TextChanged({
         if (-not $p) { $lblJInfo.ForeColor = [Drawing.Color]::Firebrick; $lblJInfo.Text = '이 프로그램이 모르는 모드팩이나 버전이에요. 프로그램을 껐다가 다시 켜서 최신 버전으로 업데이트한 다음 다시 붙여 넣어 주세요.'; $script:joinCode = $null; return }
         $lblJInfo.ForeColor = [Drawing.Color]::DarkGreen
         $lblJInfo.Text = "서버: $($c.n)   |   모드팩: $($p.name)   |   방장이 추가한 모드: $(@($c.m).Count)개$extra`n아래 [▶ 설치하고 게임 켜기]를 누르세요."
-        if ($c.a) { $txtJAddr.Text = $c.a }
+        if ($c.a) { $txtJAddr.Text = $c.a; $lblJoinWork.Text = '' }
+        else { $txtJAddr.Text = ''; $lblJoinWork.ForeColor = [Drawing.Color]::DarkOrange; $lblJoinWork.Text = "방장이 아직 Playit을 연결하지 않아서 주소가 비어 있어요.`n방장에게 [Playit 연결 설정]을 해 달라고 하거나, 주소를 물어봐서 위 칸에 넣어 주세요." }
     })
 function Test-PackDef($c) {
     # A pack definition carried in a join code: only Modrinth slugs and CurseForge's own file server are accepted
@@ -1997,7 +2035,7 @@ function Update-JoinedList {
     foreach ($g in @(Get-ChildItem -LiteralPath $GameRoot -Directory -Filter 'join-*' -ErrorAction SilentlyContinue)) {
         $m = Read-Json (Join-Path $g.FullName 'mcsm-game.json'); if (-not $m) { continue }
         $script:joined += , @($g.FullName, $m)
-        [void]$lstJoined.Items.Add("$($m.name)  -  $($m.packName) $($m.version)  ($($m.address))")
+        [void]$lstJoined.Items.Add("$($m.name)  ($($m.version))")
     }
     if ($lstJoined.Items.Count) { $lstJoined.SelectedIndex = 0 }
 }
@@ -2047,6 +2085,7 @@ $uiTimer.Add_Tick({
         if ($script:autoBk -and -not $script:autoBk.proc.Running) { Complete-AutoBackup }
         $script:tick++
         if ($script:tick % 12 -eq 0) { Update-PlayitLabel }
+        if (($script:tick -eq 8 -or $script:tick % 2400 -eq 0) -and (Get-PlayitKey)) { [void](Sync-PlayitAddress) }
     })
 
 $form.Add_FormClosing({
