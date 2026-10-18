@@ -1,5 +1,7 @@
 {
   "_comment": "CurseForge packs: add new server pack links at the top of 'versions'. URL = https://mediafilez.forgecdn.net/files/<fileId / 1000>/<fileId % 1000>/<file name>. Modrinth packs list their versions live, only the slug is needed.",
+  "_propsComment": "server.properties for a NEW server: defaultProps, then the pack's own props on top. Updates keep the old file. Only the keys install.ps1 allows are used.",
+  "defaultProps": { "allow-flight": "true", "spawn-protection": "64", "max-tick-time": "180000", "difficulty": "normal", "view-distance": "8", "simulation-distance": "6" },
   "packs": [
     {
       "id": "medieval-mc",
@@ -64,6 +66,7 @@
     },
     {
       "id": "cobblemon",
+      "props": { "view-distance": "10", "simulation-distance": "8" },
       "name": "Cobblemon Official Modpack [Fabric]",
       "source": "modrinth",
       "slug": "cobblemon-fabric",
@@ -94,6 +97,7 @@
     },
     {
       "id": "zombie100",
+      "props": { "difficulty": "hard" },
       "name": "Zombie Invade 100 Days",
       "source": "modrinth",
       "slug": "zombie-invade-100-days",

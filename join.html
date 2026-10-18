@@ -47,16 +47,16 @@
   code { background: var(--code-bg); border-radius: 6px; padding: 1px 6px; font-family: Consolas, ui-monospace, monospace; overflow-wrap: anywhere; }
   ul { padding-left: 20px; margin: 6px 0; }
   a { color: var(--accent); }
-  .hidden { display: none; }
+  .hidden { display: none !important; }
   footer { color: var(--muted); font-size: 13px; margin-top: 22px; }
 </style>
 </head>
 <body>
 <main>
   <h1>마인크래프트 서버에 초대받았어요</h1>
-  <p class="sub" id="sub">친구가 연 모드팩 서버예요. 아래 순서대로 하면 모드팩과 추가 모드까지 자동으로 깔려요.</p>
+  <p class="sub" id="sub">친구가 연 모드팩 서버예요. 아래 순서대로 하면 돼요.</p>
 
-  <div class="warn hidden" id="mobile">휴대폰에서는 설치할 수 없어요. 이 링크를 PC로 보내서 PC(Windows)에서 열어 주세요.
+  <div class="warn hidden" id="mobile">휴대폰에서는 설치할 수 없어요. 이 링크를 PC로 보내서 PC에서 열어 주세요.
     <div class="row" style="margin-top:8px"><button class="secondary" id="copyPage">이 페이지 링크 복사</button></div>
   </div>
   <div class="warn hidden" id="bad">초대 코드가 없거나 잘린 링크예요. 방장에게 [친구 초대 링크 복사]로 링크를 다시 받아 주세요.</div>
@@ -69,6 +69,7 @@
     </dl>
   </section>
 
+  <!-- With the program (Windows): the default view -->
   <section class="card" id="steps">
     <div class="step"><div class="num">1</div><div>
       <p><b>프로그램을 받아요.</b> 버튼을 누르면 초대 코드도 같이 복사돼요.</p>
@@ -79,41 +80,74 @@
       <p><b>프로그램을 켜면 초대 코드가 저절로 들어가요.</b> [친구 서버 들어가기] 탭에서 <b>▶ 설치하고 게임 켜기</b>를 눌러요.</p>
       <div class="row"><button class="secondary" id="copyCode">초대 코드만 다시 복사</button></div>
       <small>이미 프로그램이 있으면 이 버튼만 누르고 프로그램을 켜세요. 코드가 안 들어가 있으면 [친구 서버 들어가기] 탭 칸에 붙여 넣으세요 (Ctrl+V).</small>
+      <small class="hidden" id="pCfNote"><b>CurseForge 모드팩이라</b> 프로그램이 모드팩을 대신 받지 않고, <b>CurseForge 앱으로 설치하기</b> 창을 띄워서 순서를 알려 줘요. (앱 받기 → 같은 버전 설치)</small>
     </div></div>
-    <div class="step"><div class="num">3</div><div>
-      <p><b>런처가 열리면</b> 설치 목록에서 <b>모드팩: …</b>을 고르고 [플레이] → 멀티플레이 → 서버 접속.</p>
+    <div class="step hidden" id="pModsStep"><div class="num">3</div><div>
+      <p><b>방장이 추가한 모드를 넣어요.</b></p>
+      <ul>
+        <li class="hidden" id="pAuto"><b>[자동] <span id="pAutoN">0</span>개</b>: <span id="pAutoHow">프로그램이 Modrinth에서 알아서 받아서 넣어요. 할 일 없어요.</span></li>
+        <li class="hidden" id="pLink"><b>[링크] <span id="pLinkN">0</span>개</b>: Modrinth에 없는 모드라 원본 페이지에서 직접 받아요.
+          <span id="pLinkHow">설치가 끝나면 <b>추가 모드 직접 받기</b> 창이 떠요. 아래 링크(또는 창의 [선택한 모드 페이지 열기])에서 이 마인크래프트 버전에 맞는 <code>.jar</code> 파일을 받아서,
+          창의 [넣을 폴더 열기]로 열리는 <code>직접_받은_모드</code> 폴더에 넣고 <b>[다 넣었어요. 게임 켜기]</b>를 눌러요. 다음부터는 게임을 켤 때마다 알아서 들어가요.</span>
+          <ul id="pLinks"></ul>
+        </li>
+      </ul>
+    </div></div>
+    <div class="step"><div class="num" id="pLastNum">3</div><div>
+      <p id="pPlay"><b>런처가 열리면</b> 설치 목록에서 <b>모드팩: …</b>을 고르고 [플레이] → 멀티플레이 → 서버 접속. (서버는 목록에 이미 들어 있어요)</p>
       <small>방장에게 내 마인크래프트(자바) 닉네임을 꼭 알려 주세요. 화이트리스트에 있어야 들어갈 수 있어요.</small>
     </div></div>
     <p class="ok" id="status" role="status" aria-live="polite"></p>
+    <div class="row"><a class="btn secondary" id="toManual">프로그램 없이 직접 하기 (CurseForge·Modrinth 앱, Mac)</a></div>
   </section>
 
-  <section class="card hidden" id="manual">
-    <details id="manualDetails">
-      <summary>프로그램 없이 직접 하기 (CurseForge·Modrinth 앱, Mac)</summary>
-      <ol>
-        <li>CurseForge 앱이나 Modrinth 앱에서 <b id="mPack">모드팩</b>을 검색해서 <b id="mVer">같은 버전</b>으로 설치해요.</li>
-        <li>앱 설정에서 게임 메모리(램)를 6~8GB로 올려요.</li>
-        <li id="mModsItem" class="hidden">추가 모드를 모드팩의 mods 폴더에 넣어요 (모드팩 오른쪽 위 점 3개 → Open Folder → mods):
-          <ul id="mMods"></ul>
-        </li>
-        <li>게임 실행 → 멀티플레이 → 서버 추가 → 주소 <code id="mAddr">방장에게 물어보세요</code>
-          <button class="secondary hidden" id="copyAddr" style="padding:4px 10px; margin-left:4px">주소 복사</button></li>
-      </ol>
-    </details>
+  <!-- Without the program: the friend installs everything from the official sites (?mode=manual) -->
+  <section class="card hidden" id="manualSteps">
+    <div class="step"><div class="num">1</div><div>
+      <p><b id="mAppName">모드팩 앱</b>을 받아요.</p>
+      <div class="row">
+        <a class="btn primary hidden" id="mCfApp" href="https://www.curseforge.com/download/app" target="_blank" rel="noopener">CurseForge 앱 받기</a>
+        <a class="btn primary hidden" id="mMrApp" href="https://modrinth.com/app" target="_blank" rel="noopener">Modrinth 앱 받기</a>
+      </div>
+      <small>설치하고 켠 다음 Minecraft를 골라요. 앱 설정에서 게임 메모리(램)를 6~8GB로 올려 주세요.</small>
+    </div></div>
+    <div class="step"><div class="num">2</div><div>
+      <p>앱에서 모드팩 <b id="mPack">-</b>을(를) 검색해서 버전 <b id="mVer">-</b>(으)로 설치해요.</p>
+      <div class="row"><a class="btn secondary hidden" id="mPage" target="_blank" rel="noopener">모드팩 공식 페이지 열기</a></div>
+      <small>버전이 다르면 접속이 안 돼요.</small>
+    </div></div>
+    <div class="step hidden" id="mModsStep"><div class="num">3</div><div>
+      <p><b>방장이 추가한 모드를 넣어요.</b> 각 링크에서 이 마인크래프트 버전에 맞는 <code>.jar</code> 파일을 받아서, <b>게임을 끈 상태에서</b> 모드팩의 <code>mods</code> 폴더에 넣어요.</p>
+      <ul id="mMods"></ul>
+      <small>CurseForge 앱: 모드팩 오른쪽 위 점 3개 → Open Folder → mods. Modrinth 앱: 모드팩 화면에서 폴더 열기 → mods.</small>
+    </div></div>
+    <div class="step"><div class="num" id="mLastNum">3</div><div>
+      <p>앱에서 <b>Play</b> → 마인크래프트가 켜지면 <b>멀티플레이 → 서버 추가</b> → 주소 <code id="mAddr">방장에게 물어보세요</code>
+        <button class="secondary hidden" id="mCopyAddr" style="padding:4px 10px; margin-left:4px">주소 복사</button></p>
+      <small>방장에게 내 마인크래프트(자바) 닉네임을 꼭 알려 주세요. 화이트리스트에 있어야 들어갈 수 있어요.</small>
+    </div></div>
+    <p class="ok" id="mStatus" role="status" aria-live="polite"></p>
+    <div class="row"><a class="btn secondary" id="toProgram">← 프로그램으로 하기 (Windows, 더 쉬워요)</a></div>
   </section>
 
-  <footer>이 페이지는 초대 코드를 어디에도 보내지 않아요. 코드는 링크의 # 뒤에만 있고, 이 PC 안에서만 풀어서 보여 줘요.</footer>
+  <footer>이 페이지는 초대 코드를 어디에도 보내지 않아요. 코드는 링크의 # 뒤에만 있고, 이 PC 안에서만 풀어서 보여 줘요. 모드팩과 모드는 언제나 공식 사이트(CurseForge, Modrinth, 모드 제작자 페이지)에서 받아요.</footer>
 </main>
 <script>
 (function () {
   "use strict";
   var ZIP = "https://github.com/epaldks10-ship-it/mc-modpack-server-manager-release/releases/latest/download/ModpackServerManager.zip";
   var $ = function (id) { return document.getElementById(id); };
+  var show = function (id) { $(id).classList.remove("hidden"); }, hide = function (id) { $(id).classList.add("hidden"); };
   var m = /MCSM[12]-[A-Za-z0-9_-]{8,}/.exec(decodeURIComponent(location.hash || ""));
   var code = m ? m[0] : "";
+  // ?mode=manual is the "without the program" view of the same invitation; the code stays after '#'
+  var manual = new URLSearchParams(location.search).get("mode") === "manual";
+  $("toManual").href = location.pathname + "?mode=manual" + location.hash;
+  $("toProgram").href = location.pathname + location.hash;
+  if (manual) { hide("steps"); show("manualSteps"); }
 
-  if (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) $("mobile").classList.remove("hidden");
-  if (!code) { $("bad").classList.remove("hidden"); $("steps").classList.add("hidden"); }
+  if (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) show("mobile");
+  if (!code) { show("bad"); hide("steps"); hide("manualSteps"); }
 
   function say(t) { $("status").textContent = t; }
   function copy(text) {
@@ -152,53 +186,72 @@
     return JSON.parse(await new Response(stream).text());
   }
   async function packName(c) {
-    if (c.d && c.d.name) return { name: c.d.name, source: c.d.source };
+    if (c.d && c.d.name) return { name: c.d.name, source: c.d.source, page: c.d.page };
     try {
       var r = await fetch("program/packs.json", { cache: "no-cache" });
       var list = (await r.json()).packs || [];
-      for (var i = 0; i < list.length; i++) if (list[i].id === c.p) return { name: list[i].name, source: list[i].source };
+      for (var i = 0; i < list.length; i++) if (list[i].id === c.p) return { name: list[i].name, source: list[i].source, page: list[i].page };
     } catch (e) { }
-    return { name: c.p, source: "" };
+    return { name: c.p, source: "", page: "" };
   }
   if (!code) return;
+  // Mods' own pages, as the host gave them: plain https addresses only, each shown with its site
+  var URL_OK = /^https:\/\/[A-Za-z0-9.-]+\.[A-Za-z]{2,}(:\d{1,5})?(\/[^\s"<>`]*)?$/;
+  function linkItem(text, url) {
+    var li = document.createElement("li"), a = document.createElement("a");
+    a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = text;
+    li.appendChild(a); li.appendChild(document.createTextNode(" (" + new URL(url).host + ")"));
+    return li;
+  }
+  function addressStep(c, codeId, btnId, statusId) {
+    if (!c.a) return;
+    $(codeId).textContent = c.a; show(btnId);
+    $(btnId).addEventListener("click", function () { copy(c.a).then(function () { $(statusId).textContent = "주소를 복사했어요: " + c.a; }); });
+  }
   decode(code).then(async function (c) {
-    var mods = Array.isArray(c.m) ? c.m : [];
-    var pack = await packName(c);
+    var mods = (Array.isArray(c.m) ? c.m : []).filter(function (x) { return x && /^[A-Za-z0-9]{4,16}$/.test(x.p); });
+    var links = (Array.isArray(c.l) ? c.l : []).filter(function (x) { return x && typeof x.u === "string" && URL_OK.test(x.u) && x.u.length <= 300; });
+    var pack = await packName(c), cf = pack.source === "curseforge", mr = pack.source === "modrinth";
     $("fServer").textContent = c.n || "-";
     $("fPack").textContent = pack.name;
-    $("fMods").textContent = mods.length ? mods.length + "개 (자동으로 깔려요)" : "없음";
-    $("info").classList.remove("hidden");
-    $("sub").textContent = "'" + (c.n || "친구") + "' 서버예요. 아래 순서대로 하면 모드팩과 추가 모드까지 자동으로 깔려요.";
+    $("fMods").textContent = (mods.length || links.length) ? ("[자동] " + mods.length + "개" + (links.length ? " + [링크] " + links.length + "개" : "")) : "없음";
+    show("info");
+    $("sub").textContent = "'" + (c.n || "친구") + "' 서버예요. " + (manual ? "앱으로 직접 설치하는 방법이에요. " : "") + "아래 순서대로 하면 돼요.";
 
-    $("manual").classList.remove("hidden");
+    // ---- with the program ----
+    if (cf) {
+      show("pCfNote");
+      $("pAutoHow").textContent = "CurseForge 앱으로 설치하기 창의 [[자동] 모드 넣기]를 누르면 Modrinth에서 받아서 앱의 mods 폴더에 넣어 줘요.";
+      $("pLinkHow").textContent = "아래 링크에서 이 마인크래프트 버전에 맞는 .jar 파일을 받아서 앱의 모드팩 mods 폴더에 넣어요. (창의 [넣을 폴더 열기]로 열 수 있어요)";
+      $("pPlay").innerHTML = "앱에서 <b>Play</b> → 멀티플레이 → <b>서버 추가</b> → 주소 넣고 접속. (창의 [서버 주소 복사]로 주소를 복사할 수 있어요)";
+    }
+    if (mods.length || links.length) {
+      show("pModsStep"); $("pLastNum").textContent = "4";
+      if (mods.length) { show("pAuto"); $("pAutoN").textContent = mods.length; }
+      if (links.length) { show("pLink"); $("pLinkN").textContent = links.length; links.forEach(function (x) { $("pLinks").appendChild(linkItem(String(x.t || "모드"), x.u)); }); }
+    }
+
+    // ---- without the program ----
     $("mPack").textContent = pack.name;
-    // CurseForge versions are named in the code; Modrinth ones are an id, looked up only if someone opens this part
-    if (pack.source === "curseforge") $("mVer").textContent = c.k + " 버전";
-    $("manualDetails").addEventListener("toggle", function () {
-      if (!this.open || this.dataset.loaded) return;
-      this.dataset.loaded = "1";
-      if (pack.source === "modrinth" && /^[A-Za-z0-9]{8}$/.test(c.k)) {
-        fetch("https://api.modrinth.com/v2/version/" + c.k).then(function (r) { return r.json(); })
-          .then(function (v) { if (v && v.version_number) $("mVer").textContent = v.version_number + " 버전"; }).catch(function () { });
-      }
-    });
-    if (mods.length) {
-      $("mModsItem").classList.remove("hidden");
-      mods.forEach(function (x) {
-        if (!/^[A-Za-z0-9]{4,16}$/.test(x.p)) return;
-        var li = document.createElement("li"), a = document.createElement("a");
-        a.href = "https://modrinth.com/project/" + x.p; a.target = "_blank"; a.rel = "noopener"; a.textContent = x.f;
-        li.appendChild(a); $("mMods").appendChild(li);
-      });
+    $("mVer").textContent = c.k;
+    if (cf) { $("mAppName").textContent = "CurseForge 앱"; show("mCfApp"); }
+    else if (mr) { $("mAppName").textContent = "Modrinth 앱"; show("mMrApp"); }
+    else { $("mAppName").textContent = "CurseForge 앱이나 Modrinth 앱"; show("mCfApp"); show("mMrApp"); }
+    if (pack.page && URL_OK.test(pack.page)) { $("mPage").href = pack.page; show("mPage"); }
+    // Modrinth versions travel as an id; the page shows its name
+    if (mr && /^[A-Za-z0-9]{8}$/.test(c.k)) {
+      fetch("https://api.modrinth.com/v2/version/" + c.k).then(function (r) { return r.json(); })
+        .then(function (v) { if (v && v.version_number) $("mVer").textContent = v.version_number; }).catch(function () { });
     }
-    if (c.a) {
-      $("mAddr").textContent = c.a;
-      $("copyAddr").classList.remove("hidden");
-      $("copyAddr").addEventListener("click", function () { copy(c.a).then(function () { $("copyAddr").textContent = "복사했어요"; }); });
+    if (mods.length || links.length) {
+      show("mModsStep"); $("mLastNum").textContent = "4";
+      mods.forEach(function (x) { $("mMods").appendChild(linkItem(String(x.f), "https://modrinth.com/project/" + x.p)); });
+      links.forEach(function (x) { $("mMods").appendChild(linkItem(String(x.t || "모드"), x.u)); });
     }
+    addressStep(c, "mAddr", "mCopyAddr", "mStatus");
   }).catch(function () {
     // Still usable: the program can read the code even if this browser can't show what's in it
-    $("sub").textContent = "아래 순서대로 하면 모드팩과 추가 모드까지 자동으로 깔려요.";
+    $("sub").textContent = "아래 순서대로 하면 돼요.";
   });
 })();
 </script>

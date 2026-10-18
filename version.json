@@ -1,19 +1,19 @@
 {
-    "version":  "1.0.11",
+    "version":  "1.0.12",
     "date":  "2026-10-18",
-    "notes":  "친구 초대 링크(짧고 암호화됨), 모르는 사람 접속 막기, 서버 켜 둔 채 3시간마다 자동 백업, 여럿이 할 때 추천값과 서버 메모리 설정을 넣었어요.",
+    "notes":  "모드팩에 맞는 서버 기본 설정, 모드 악성코드 검사, PC 밖 백업 복사, 방장만 관리자, Playit 설정 안내 개선, 친구에게 파일 대신 공식 링크로 안내(재배포 방지), 화이트리스트 읽기 오류 수정.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "8d35cc56b5b3503510bfca71e7f569665f2f943b13621200efe1e96a49b2465a"
+                      "sha256":  "1c3ca198860d05b55f0f93cd8482268412f915b628a6cb00a9d86aebefcfec1e"
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "b6f092bacb6ed99af158616b9d3735706f0f1b20b8a82fad7d5bac71c229f3ef"
+                      "sha256":  "fce4030031bf7cebef20528cfe4c655d680b6b12902d89fc7171564f58e6094c"
                   },
                   {
                       "path":  "packs.json",
-                      "sha256":  "23a95c083bd6c4e0803290649371c5b403624fa6b1c9ad4956e173d7b1f5ef1f"
+                      "sha256":  "016aca8eba6baceb191d1f41edd5a5e24288c66b846f5be08a454f8d7fe4b6a7"
                   },
                   {
                       "path":  "client-only-mods.txt",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "2b6ca9e40b4b86c846e96526190b2415397278e3c52c67eddf74793f147cf9ee"
+                      "sha256":  "6f25d349e9cbb4f148cb49fb42c62d5b1901d171d0e75f4554e1fcac2782b8a2"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "b69dacb21950a555c32812ef66ec2153e340ed5f0e4b022b3023005688907b6b"
+                      "sha256":  "123e6d68829e78385839a990152031e31eb7f5ad51f444e9ffbf758dbde7175c"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "3c727683c83955823d4acb8adbafc7f2f8f22f4f87a77f145064f2b3d326877a"
+                     "sha256":  "5458cb3be5a7dd0933c1b890831e59ac2e7b6d44b3fcd00f1a75f8dd3d4a7eb1"
                  }
 }

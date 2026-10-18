@@ -44,7 +44,7 @@
   <ol>
     <li><b class="red">이 폴더를 통째로 남에게 주거나 인터넷에 올리지 마세요.</b><br>
       카톡, 디스코드, 구글 드라이브, 원드라이브 등에 <code>모드팩서버관리.exe</code>가 있는 폴더를 올리면 안 돼요. 우리 월드, 화이트리스트, 서버 설정이 다 들어 있어요.<br>
-      친구에게 보내도 되는 건 딱 두 가지예요. <b>① [친구 접속 안내]의 글</b>, <b>② 친구용_추가모드 폴더</b>. <span class="go">→ <a href="#friend">4번</a></span></li>
+      친구에게 보내는 건 <b>초대 링크(또는 [친구 접속 안내]의 글) 하나</b>뿐이에요. 모드팩이나 모드 파일은 보내지 않아요. 남이 만든 파일을 직접 건네면 <b>재배포</b>라 문제가 될 수 있어서, 친구는 언제나 공식 사이트에서 받아요. <span class="go">→ <a href="#friend">4번</a></span></li>
     <li><b class="red">서버가 켜져 있을 때 컴퓨터를 끄지 마세요.</b><br>
       반드시 <span class="btn">■ 서버 끄기</span>를 누르고 <b>"꺼짐"</b>이 될 때까지 기다리세요. 그냥 끄면 <b>월드가 망가질 수 있어요.</b>
       (프로그램 창을 닫으려고 하면 "안전하게 끄고 닫을까요?"라고 물어봐 줘요)</li>
@@ -76,12 +76,36 @@
 <h2 id="playit">1. Playit 연결 (처음 한 번만) <span class="st st-any">언제든지</span></h2>
 <p>Playit은 친구들이 들어올 <b>인터넷 주소</b>를 만들어 주는 무료 서비스예요. 공유기 설정은 필요 없어요.</p>
 <ol>
-  <li><span class="btn">내 서버</span> 탭 왼쪽의 <span class="btn">Playit 연결 설정</span>을 눌러요.</li>
-  <li><span class="btn">비밀 키 만드는 페이지 열기</span>를 누르고 playit.gg에 로그인해요. 계정이 없으면 구글 계정 등으로 가입해요(무료).</li>
-  <li>화면 안내를 따라가면 <b>비밀 키(Secret Key)</b>가 나와요. 복사해요.</li>
-  <li>설정 창의 칸에 붙여 넣고 <span class="btn">저장</span>을 눌러요. 키는 <b>이 PC의 내 Windows 계정에서만 풀리게 암호화</b>돼서 저장돼요.</li>
-  <li id="playit-tunnel"><b>[터널 만들기]</b> <span class="btn">터널 페이지 열기</span> → <b>Add Tunnel</b>을 눌러요. 종류 <b>Minecraft Java</b>, 주소 <code>127.0.0.1</code>, 포트 <code>25565</code>로 만들어요.</li>
-  <li>터널 목록의 <code>어쩌구.joinmc.link</code> 같은 주소가 <b>우리 서버 주소</b>예요. 설정 창의 <span class="btn">자동으로 가져오기</span>를 누르면 프로그램이 Playit에 물어봐서 맨 아래 칸에 넣어 줘요. (안 되면 주소를 복사해서 붙여 넣고 <span class="btn">저장</span>)<br>
+  <li><span class="btn">내 서버</span> 탭 왼쪽의 <span class="btn">Playit 연결 설정</span>을 눌러요. 창에 ①~⑤ 순서가 적혀 있어요. playit.gg 사이트는 영어라서, 누를 버튼과 칸 이름을 영어 그대로 적었어요.</li>
+  <li><b>[가입·로그인]</b> <span class="btn">playit.gg 열기</span> → 계정이 없으면 <b>Create a new account</b>로 가입해요(이메일, 비밀번호, 무료). 받은 메일의 인증 링크까지 누르면 끝이에요. 계정이 있으면 로그인만 해요.</li>
+  <li><b>[비밀 키 받기]</b> <span class="btn">비밀 키 만드는 페이지 열기</span>를 눌러요. "Where do you want to integrate Playit?" 화면이 나오면 <b>Docker</b>를 골라요. (내 PC에 Playit을 따로 설치하는 게 아니라, 이 프로그램 안의 Playit이 대신 연결돼서 Docker를 골라요)</li>
+
+  <li><b>Agent Name</b> 칸에 영어 이름(예: <code>mcserver</code>)을 넣고 <b>Create Agent</b>를 눌러요. "Start the Docker container" 화면이 나오면 <b>Docker run</b> 옆의 <b>Copy</b>를 눌러요. 그 명령어 줄 안에 <b>비밀 키(SECRET_KEY)</b>가 들어 있어요.</li>
+
+  <li>설정 창의 칸에 그대로 붙여 넣고 <span class="btn">저장</span>을 눌러요. 프로그램이 키만 골라내고, 바로 Playit을 연결해요. 사이트의 <b>Agents</b> 메뉴에서 그 이름 옆에 <b>connected</b>가 보이면 성공이에요. 키는 <b>이 PC의 내 Windows 계정에서만 풀리게 암호화</b>돼서 저장돼요. (Docker 화면 아래 버튼이 계속 Loading...이어도 괜찮아요. 그냥 다음으로 가요)</li>
+
+  <li id="playit-tunnel"><b>[터널 만들기]</b> <span class="btn">터널 페이지 열기</span> → <b>Create Tunnel</b>(터널이 하나도 없으면 <b>Create your first tunnel</b>)을 눌러요. 칸이 하나씩 열리는데, 하나 고를 때마다 <b>Next</b>를 눌러요.
+
+    <table>
+
+      <tr><th>칸 이름</th><th>넣을 것</th></tr>
+
+      <tr><td>Name your tunnel</td><td>아무 이름 (예: minecraft)</td></tr>
+
+      <tr><td>Tunnel Type</td><td><b>Minecraft Java</b></td></tr>
+
+      <tr><td>Public Endpoint</td><td><b>Free Network</b> (Premium Network는 돈이 들어요)</td></tr>
+
+      <tr><td>Assign to Agent</td><td>앞에서 넣은 이름 (예: mcserver). "tunnel type not supported"라고 나오면 키를 저장하고 Playit이 한 번 연결된 다음 다시 해요.</td></tr>
+
+      <tr><td>Origin Config</td><td>Local IP <code>127.0.0.1</code>, Local Port <code>25565</code> (처음부터 들어 있어요. Proxy Protocol은 None 그대로)</td></tr>
+
+    </table>
+
+    맨 아래 <b>Create Tunnel</b>을 누르면 잠깐 "Allocating address..."가 나왔다가 주소가 생겨요.</li>
+
+  <li>터널 화면 맨 위의 <code>어쩌구.tun.ply.gg</code> 같은 주소가 <b>우리 서버 주소</b>예요. 프로그램이 1분 안에 Playit에 물어봐서 설정 창 칸에 알아서 넣어요. <span class="btn">자동으로 가져오기</span>를 누르면 바로 받아요. (안 되면 주소를 복사해서 붙여 넣고 <span class="btn">저장</span>)<br>
+
       프로그램을 켤 때와 친구 접속 안내를 열 때도 다시 확인하니까, 터널을 새로 만들어 주소가 바뀌어도 알아서 따라가요.</li>
   <li>이제 왼쪽 아래 <span class="btn">친구에게 줄 주소 복사</span>로 언제든 주소를 복사할 수 있고, 친구 접속 안내에도 주소가 자동으로 들어가요. <span class="go">→ 다음: <a href="#friend">4번 ②</a>에서 친구에게 보내요</span></li>
 </ol>
@@ -174,7 +198,7 @@
   <li>왼쪽 <span class="btn">친구 초대 링크 복사</span>를 눌러요.</li>
   <li>카톡이나 디스코드에 붙여 넣어요. <b>짧은 링크 한 줄</b>이에요. 서버 주소, 모드팩, 모드 목록은 링크 안에 <b>압축하고 암호화</b>해서 넣어 두기 때문에, 대화방에서 다른 사람이 봐도 무슨 내용인지 알 수 없어요.</li>
   <li><b>모드를 추가하거나 빼면 링크도 바뀌어요.</b> 다시 눌러서 새 링크를 보내 주세요. 친구는 새 링크만 열면 바뀐 모드까지 알아서 맞춰요.</li>
-  <li><span class="btn">내 컴퓨터의 .jar 파일 추가</span>로 넣은 모드 중 Modrinth에 없는 것은 링크로 못 보내요. 그런 모드가 있으면 프로그램이 알려 주니까, <span class="btn">친구용 추가모드 폴더 열기</span> → 폴더를 압축해서 같이 보내요.</li>
+  <li><span class="btn">내 컴퓨터의 .jar 파일 추가</span>로 넣은 모드 중 Modrinth에 없는 것은, 프로그램이 <b>그 모드를 받은 공식 페이지 주소</b>를 물어봐요(CurseForge, GitHub 등). 친구에게는 파일 대신 그 링크와 넣는 방법을 알려 줘요. 나중에 넣으려면 <span class="btn">모드 추가 / 관리</span> → 목록에서 고르고 → <span class="btn">선택한 모드의 원본 주소 넣기</span>.</li>
 </ol>
 <div class="warn">링크는 믿는 친구에게만 보내세요. 링크의 암호화는 대화방을 훔쳐보는 사람에게서 내용을 가리는 것이지 비밀번호는 아니에요. 진짜로 막아 주는 건 <b>화이트리스트</b>예요. (링크를 열어도 화이트리스트에 없으면 못 들어와요)</div>
 <p>예전처럼 긴 안내 글이 필요하면 <span class="btn">친구 접속 안내</span> → <span class="btn">글 전체 복사</span>를 써도 돼요. 안내 글 안에도 같은 초대 링크와 코드가 들어 있어요.</p>
@@ -184,15 +208,17 @@
   <li>페이지의 <span class="btn">모드팩서버관리 프로그램 받기</span>를 눌러요. 초대 코드도 같이 복사돼요. 받은 파일의 압축을 풀고 <code>모드팩서버관리.exe</code>를 켜요.<br>
       (이미 프로그램이 있으면 <span class="btn">초대 코드만 다시 복사</span>를 누르고 프로그램을 켜요)</li>
   <li>프로그램이 복사해 둔 코드를 찾아서 <span class="btn">친구 서버 들어가기</span> 탭에 넣어 줘요. <span class="btn">▶ 설치하고 게임 켜기</span>를 눌러요. (코드가 안 들어가 있으면 링크를 통째로 칸에 붙여 넣어도 돼요)</li>
-  <li>같은 모드팩, 같은 버전, 방장이 추가한 모드까지 알아서 깔려요. 런처가 열리면 <code>모드팩: ...</code> → 플레이 → 멀티플레이 → 서버 접속.</li>
+  <li><b>Modrinth 모드팩</b>이면 같은 모드팩, 같은 버전, 방장이 추가한 Modrinth 모드까지 공식 사이트에서 알아서 받아요. 런처가 열리면 <code>모드팩: ...</code> → 플레이 → 멀티플레이 → 서버 접속.</li>
+  <li>방장이 <b>원본 링크</b>로 알려 준 모드가 있으면, 설치가 끝난 다음 <b>추가 모드 직접 받기</b> 창이 떠요. <span class="btn">선택한 모드 페이지 열기</span> → 같은 마인크래프트 버전의 파일을 받아서 → <span class="btn">넣을 폴더 열기</span>로 열린 <code>직접_받은_모드</code> 폴더에 넣어요. 게임을 켤 때마다 알아서 넣어 주고, 다시 설치해도 안 지워져요.</li>
+  <li><b>CurseForge 모드팩</b>이면 이 프로그램이 모드팩을 대신 받지 않아요. <b>CurseForge 앱으로 설치하기</b> 창이 뜨니 순서대로 하면 돼요: 앱 받기 → 모드팩 검색해서 <b>같은 버전</b>으로 설치 → 추가 모드 넣기(<span class="btn">[자동] 모드 넣기</span>를 누르면 Modrinth 모드는 앱의 mods 폴더에 넣어 줘요) → 앱에서 Play → 멀티플레이 → 서버 추가.</li>
   <li>다음부터는 같은 탭의 <b>설치해 둔 친구 서버</b>에서 <span class="btn">▶ 게임 켜기</span>만 누르면 돼요. 방장이 모드나 모드팩을 바꿨다면 <b>새 링크</b>를 다시 열어요.</li>
 </ol>
 <h3>④ 친구가 할 일: 앱으로 직접 하는 방법</h3>
 <ol>
   <li><b>CurseForge 앱</b> 또는 <b>Modrinth 앱</b>을 설치해요.</li>
-  <li>초대 링크 페이지의 <b>프로그램 없이 직접 하기</b>를 펼치면 모드팩 이름, 버전, 추가 모드, 주소가 나와요. 그 모드팩을 검색해서 <b>같은 버전</b>으로 설치해요. (Mac도 이 방법으로 해요)</li>
+  <li>초대 링크 페이지 맨 아래 <b>프로그램 없이 직접 하기</b> 버튼을 누르면 앱 받는 곳, 모드팩 이름과 버전, 공식 페이지, 추가 모드마다의 공식 링크, 주소가 순서대로 나와요. (이 화면 주소만 따로 보내도 돼요. [친구 접속 안내] 글에도 들어 있어요) 그 모드팩을 검색해서 <b>같은 버전</b>으로 설치해요. (Mac도 이 방법으로 해요)</li>
   <li>앱 설정에서 <b>메모리(램)</b>를 6~8GB로 올려요.</li>
-  <li>추가 모드가 있으면 <b>게임을 끈 상태에서</b> 받은 파일을 모드팩의 <code>mods</code> 폴더에 넣어요. (앱에서 모드팩 오른쪽 위 점 3개 → Open Folder → mods)</li>
+  <li>추가 모드가 있으면 페이지에 나온 <b>모드마다의 공식 링크</b>에서 같은 마인크래프트 버전의 파일을 받아서, <b>게임을 끈 상태에서</b> 모드팩의 <code>mods</code> 폴더에 넣어요. (앱에서 모드팩 오른쪽 위 점 3개 → Open Folder → mods)</li>
   <li>게임 실행 → <b>멀티플레이 → 서버 추가</b> → 받은 Playit 주소 입력 → 접속.</li>
 </ol>
 
@@ -205,7 +231,12 @@
   <li>서버를 켜서 "서버 열림!"까지 가는지 확인해요. <span class="go">→ <a href="#run">3번</a></span> (안 켜지면 <span class="go">→ <a href="#trouble">10번</a></span>)</li>
   <li><span class="btn">초대 링크 복사</span>로 친구들에게 새 링크를 보내요. 친구는 링크만 열면 새 모드까지 자동으로 받아요. <span class="go">→ <a href="#friend">4번 ②</a></span></li>
 </ol>
-<p>"이 서버에 직접 추가한 모드" 목록의 <b>[자동]</b>은 친구가 초대 링크로 자동으로 받는 모드, <b>[파일]</b>은 Modrinth에서 못 찾아서 <code>친구용_추가모드</code> 폴더를 따로 보내야 하는 모드예요. <span class="btn">내 컴퓨터의 .jar 파일 추가</span>로 넣은 파일도 Modrinth에 있는 파일이면 알아서 찾아서 [자동]이 돼요.</p>
+<p>"이 서버에 직접 추가한 모드" 목록의 표시는 이런 뜻이에요.</p>
+<ul>
+  <li><b>[자동]</b> Modrinth 모드라서 친구 PC가 Modrinth에서 알아서 받아요. <span class="btn">내 컴퓨터의 .jar 파일 추가</span>로 넣은 파일도 Modrinth에 있는 파일이면 알아서 찾아서 [자동]이 돼요.</li>
+  <li><b>[링크]</b> Modrinth에 없어서, 친구가 내가 적어 둔 공식 페이지에서 직접 받아요.</li>
+  <li><b>[주소 필요]</b> 받는 곳이 없어요. 목록에서 고르고 <span class="btn">선택한 모드의 원본 주소 넣기</span>를 눌러 주세요. 파일을 직접 보내는 건 재배포라 하지 않아요.</li>
+</ul>
 <table>
   <tr><th>검색 결과의 "종류"</th><th>어디에 들어가나요</th></tr>
   <tr><td>서버+친구</td><td>서버와 친구 모두 넣어야 해요. 대부분의 모드예요.</td></tr>
@@ -225,6 +256,16 @@
   <li><span class="btn">서버 설정 (난이도, 인원 등)</span>을 눌러요.</li>
   <li>바꾸고 싶은 항목을 고르고 <span class="btn">저장</span>. <b>다음에 켤 때부터</b> 적용돼요. (서버가 켜져 있으면 볼 수만 있고 저장은 막혀 있어요)</li>
 </ol>
+<p><b>새로 만든 서버는 처음부터 모드팩에 맞는 값으로 시작해요.</b> 마인크래프트 기본값은 모드 없는 서바이벌에 맞춰져 있어서 모드팩에서는 문제가 생기거든요.</p>
+<table>
+  <tr><th>설정</th><th>마인크래프트 기본</th><th>이 프로그램</th><th>왜</th></tr>
+  <tr><td>비행 허용</td><td>끔</td><td>켬</td><td>제트팩, 날개, 날아다니는 탈것을 쓰면 "Flying is not enabled"로 쫓겨나요.</td></tr>
+  <tr><td>스폰 보호 범위</td><td>16블록</td><td>64블록 (최대)</td><td>스폰 근처는 방장(관리자)만 고칠 수 있어서, 장난이나 실수로 망가지지 않아요. 친구들은 스폰에서 조금 떨어진 곳에 집을 지으면 돼요.</td></tr>
+  <tr><td>난이도</td><td>쉬움</td><td>보통 (좀비 모드팩은 어려움)</td><td>모드팩 몬스터와 보상이 보통 이상에 맞춰져 있어요.</td></tr>
+  <tr><td>시야 / 움직이는 거리</td><td>10 / 10</td><td>8 / 6 (Cobblemon은 10 / 8)</td><td>모드가 많으면 서버가 버거워해요.</td></tr>
+  <tr><td>멈춤 감지 시간</td><td>60초</td><td>180초</td><td>첫 월드를 만들 때 오래 걸려도 서버가 멈춘 걸로 보고 꺼 버리지 않아요.</td></tr>
+</table>
+<p>이미 만들어 둔 서버는 <span class="btn">이 모드팩에 맞는 추천값 넣기</span> → <span class="btn">저장</span>을 누르면 같은 값이 들어가요. 모드팩 업데이트는 내가 바꾼 설정을 그대로 가져가요.</p>
 <h3>② 렉이 심할 때 / 여럿이 할 때</h3>
 <p>①의 창에서 <b>시야 거리</b>와 <b>움직이는 거리</b>를 6~8로 낮춰 보세요. 그래도 심하면 ③으로 가요.</p>
 <p>10명 넘게 같이 할 거라면 ①의 창 아래 <span class="btn">여럿이 할 때 추천값 넣기</span>를 누르세요. 최대 인원 25명, 시야 거리 8, 움직이는 거리 6이 들어가고, 이 모드팩과 이 PC에 맞는 <b>서버 램</b>도 알려 줘요. <span class="btn">저장</span>을 눌러야 적용돼요.</p>
@@ -285,12 +326,20 @@
   <li>1분에 60번 넘게 몰려오면 <b>Playit 연결을 10분 동안 끊어요.</b> 서버와 월드는 그대로 켜져 있고, 10분 뒤 알아서 다시 연결해요. 왼쪽 아래에 "공격 의심으로 쉬는 중"이 보여요.</li>
   <li>친구 닉네임으로 들어오려다 <b>정품 확인에 실패한 것</b>도 공격으로 세요. 정품 인증 덕분에 남의 이름으로는 들어올 수 없어요.</li>
   <li>기록은 서버 폴더의 <code>security-log.txt</code>에 남고, <span class="btn">보안 점검</span>에 최근 24시간 동안의 횟수가 보여요.</li>
+  <li><b>모드 악성코드 검사:</b> 서버를 켤 때, 게임을 켤 때, <span class="btn">내 컴퓨터의 .jar 파일 추가</span>로 모드를 넣을 때 모드 파일에 악성코드(2023년에 퍼진 fractureiser)가 없는지 확인해요. 걸리면 켜지 않고, 그 파일을 <code>격리된_위험한_모드</code> 폴더로 옮길지 물어봐요. 처음 한 번은 모드가 많으면 1~2분 걸리고, 그다음부터는 새 파일만 확인해서 금방이에요. 프로그램을 켤 때는 이 PC가 이미 감염됐는지도 확인해요.</li>
+  <li><b>관리자(OP)는 방장만:</b> 서버를 켤 때마다 방장을 관리자로 정해요. 관리자가 있어야 스폰 보호가 작동하거든요. 콘솔에 <code>op 이름</code>으로 다른 사람을 관리자로 만들려고 하면 한 번 더 물어봐요.</li>
+</ul>
+<h3 id="secmore">보안 점검에서 같이 보는 것</h3>
+<ul>
+  <li><b>오래 안 들어온 친구:</b> 30일 넘게 안 온 친구가 보여요. 친구 계정이 털리면 그 계정으로 들어올 수 있으니, <span class="btn">고칠 수 있는 것 자동으로 고치기</span>로 화이트리스트에서 빼 두세요. (빼기 전에 이름을 보여 주고 물어봐요. 다시 오면 <span class="btn">친구 추가</span>로 넣으면 돼요)</li>
+  <li><b>백업을 PC 밖에도 복사:</b> 디스크가 고장 나거나 랜섬웨어에 걸리면 월드와 백업이 같이 사라져요. <span class="btn">백업 / 월드 관리</span> → <span class="btn">복사할 곳 고르기</span>에서 OneDrive 폴더나 USB를 고르면, 새 백업이 생길 때마다 그곳에도 복사해요(최근 10개).</li>
+  <li><b>내 계정 지키기 (직접 해 주세요):</b> 마이크로소프트 계정과 playit.gg 계정에 <b>2단계 인증</b>을 켜 두세요. Playit 계정이 털리면 남이 터널을 가져갈 수 있어요.</li>
 </ul>
 <h3 id="ddos">공격(디도스)을 받는 것 같을 때 (갑자기 렉, 다들 접속이 끊김, 모르는 이름이 계속 보임)</h3>
 <p>제일 확실한 방법은 <b>주소를 바꾸는 것</b>이에요. 서버는 켜 둔 채로 해도 돼요.</p>
 <ol>
   <li><span class="btn">보안 점검</span> → <span class="btn">주소 바꾸기 도우미</span>를 눌러요. (공격 의심 알림 창에서 <b>예</b>를 눌러도 열려요)</li>
-  <li><span class="btn">터널 페이지 열기</span> → 지금 쓰던 터널을 지우고(Delete), <b>Add Tunnel</b> → Minecraft Java, 127.0.0.1, 25565로 새로 만들어요.</li>
+  <li><span class="btn">터널 페이지 열기</span> → 지금 쓰던 터널을 지우고(Delete), <b>Create Tunnel</b> → Minecraft Java, 127.0.0.1, 25565로 새로 만들어요.</li>
   <li><span class="btn">새 주소 가져오기</span>를 눌러요.</li>
   <li><span class="btn">새 초대 링크 복사</span> → <b>믿는 친구에게만</b> 보내요. 단톡방 공지나 공개 채널에는 올리지 마세요.</li>
 </ol>

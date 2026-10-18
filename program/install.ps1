@@ -222,6 +222,8 @@ function Write-Cp949([string]$path, [string]$text) {
     [IO.File]::WriteAllText($path, ($text -replace "`r?`n", "`r`n"), $Cp949)
 }
 
+# server.properties keys packs.json may set (anything security-related stays with install.ps1 and the manager)
+$PackPropKeys = @('allow-flight', 'spawn-protection', 'max-tick-time', 'difficulty', 'view-distance', 'simulation-distance', 'spawn-monsters', 'pvp', 'max-players')
 function Set-Prop([string[]]$lines, [string]$key, [string]$value) {
     $found = $false
     $out = foreach ($l in $lines) { if ($l -match "^$([regex]::Escape($key))=") { $found = $true; "$key=$value" } else { $l } }
@@ -540,29 +542,6 @@ function Get-ModrinthClient($ver, [string]$stage) {
     return $li
 }
 
-function Get-CurseForgeClient($pack, [string]$label, [string]$stage) {
-    # CurseForge only allows its own app to fetch many mods one by one, but the server pack is a single public
-    # download with every mod the server needs; a game with those mods can join, it only lacks a few look-and-feel extras
-    $ver = $pack.versions | Where-Object label -eq $label
-    if (-not $ver) { throw "버전을 찾지 못했어요: $label" }
-    $zip = Join-Path $Cache ([uri]::UnescapeDataString(($ver.url -split '/')[-1]))
-    $need = [long]($ver.size * 1.6) + 700MB
-    if (-not ((Test-Path -LiteralPath $zip) -and (Get-Item -LiteralPath $zip).Length -eq $ver.size)) { $need += $ver.size }
-    Assert-FreeSpace $need
-    Step "모드팩 받는 중 ($([math]::Round($ver.size / 1GB, 2)) GB, 몇 분 걸려요)"
-    $sha = ''; if ($ver.PSObject.Properties['sha256']) { $sha = [string]$ver.sha256 }
-    Get-Download $ver.url $zip -Size $ver.size -Sha256 $sha
-    Step '압축 푸는 중'
-    $x = Join-Path $stage '_pack'
-    [IO.Compression.ZipFile]::ExtractToDirectory($zip, $x)
-    $src = $x; $top = @(Get-ChildItem -LiteralPath $x -Force)
-    if ($top.Count -eq 1 -and $top[0].PSIsContainer) { $src = $top[0].FullName }
-    $li = Find-Loader $src $pack
-    foreach ($d in @('mods') + $ClientDirs) { $p = Join-Path $src $d; if (Test-Path -LiteralPath $p) { Copy-Tree $p (Join-Path $stage $d) } }
-    Remove-Item -LiteralPath $x -Recurse -Force
-    return $li
-}
-
 function Get-ServerClient([string]$srv, [string]$stage) {
     # The host's own server already has every file: mods it runs, client-only mods it set aside, and the extra mods for friends
     $i = Get-Content -LiteralPath (Join-Path $srv 'server-info.json') -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -856,7 +835,8 @@ function Install-Client($pack) {
             Copy-FriendMods $FromServer (Join-Path $script:tmp 'mods')
         }
         elseif ($host_) { $li = Get-ServerClient $FromServer $script:tmp }
-        elseif ($pack.source -eq 'curseforge') { $li = Get-CurseForgeClient $pack $VersionKey $script:tmp }
+        # A friend installs CurseForge modpacks with CurseForge's own app (the manager shows how); files are not fetched for them here
+        elseif ($pack.source -eq 'curseforge') { throw 'CurseForge 모드팩은 CurseForge 앱으로 설치해요. [친구 서버 들어가기] 탭에서 [▶ 설치하고 게임 켜기]를 누르면 순서를 알려 줘요.' }
         else { $ver = Get-ModrinthVersion $pack $VersionKey; $verLabel = $ver.version_number; $li = Get-ModrinthClient $ver $script:tmp }
         if ($li.version -notmatch '^[A-Za-z0-9._+-]+$' -or "$($li.mc)" -notmatch '^[0-9][0-9.]*$') { throw "모드팩 안의 버전 정보가 이상해요 (마인크래프트 '$($li.mc)', 로더 '$($li.version)')." }
         Get-AddedClientMods $AddedMods (Join-Path $script:tmp 'mods')
@@ -909,8 +889,10 @@ function Install-Client($pack) {
 }
 
 try {
-    $packs = @((Get-Content (Join-Path $Prog 'packs.json') -Raw -Encoding UTF8 | ConvertFrom-Json).packs | ForEach-Object { $_ })
+    $packsDoc = Get-Content (Join-Path $Prog 'packs.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $packs = @($packsDoc.packs | ForEach-Object { $_ })
     $pack = $packs | Where-Object id -eq $PackId
+    $builtIn = [bool]$pack
     $customFile = Join-Path $Prog 'custom-packs.json'
     if (-not $pack -and (Test-Path -LiteralPath $customFile)) {
         # Packs the user added; their CurseForge server packs may only come from CurseForge's own file server
@@ -1141,6 +1123,16 @@ try {
     $propFile = Join-Path $dir 'server.properties'
     $props = @()
     if (Test-Path $propFile) { $props = @([IO.File]::ReadAllLines($propFile, $latin1)) }
+    # Modded defaults instead of vanilla ones (flying gear and mounts, friends building near spawn, slow world generation).
+    # A pack the user added has no props of its own; an update brings the old server.properties back afterwards.
+    $packProps = @($packsDoc.defaultProps); if ($builtIn) { $packProps += @($pack.props) }
+    foreach ($src in $packProps) {
+        if (-not $src) { continue }
+        foreach ($pp in $src.PSObject.Properties) {
+            if ($pp.Name -notin $PackPropKeys -or "$($pp.Value)" -notmatch '^[A-Za-z0-9._-]{1,16}$') { continue }
+            $props = Set-Prop $props $pp.Name "$($pp.Value)"
+        }
+    }
     $props = Set-Prop $props 'white-list' 'true'
     $props = Set-Prop $props 'enforce-whitelist' 'true'
     $props = Set-Prop $props 'server-port' '25565'
