@@ -809,6 +809,7 @@ function Start-Server([switch]$Local) {
     }
     Set-SafeDefaults $d
     if (-not (Confirm-ModsSafe $d (Join-Path $d 'mods') (Join-Path $d 'mod-scan.json'))) { return }
+    Set-InviteMotd $d
     $li = Get-LaunchInfo $d
     if (-not $li) { Show-Msg '서버켜기.bat 에서 실행 정보를 찾지 못했어요.' 'Error'; return }
     $java = Join-Path $Prog "java\$($li.major)\bin\java.exe"
@@ -1136,6 +1137,12 @@ function Read-ServerOutput {
             }
             Set-HostOp $s $pendNames
             Start-SeenClock $s.dir
+            if ($script:modsChangedNote) {
+                $script:modsChangedNote = $false
+                $txtConsole.AppendText("[관리 프로그램] ※ 지난번과 모드가 달라졌어요. 프로그램을 쓰는 친구는 [▶ 게임 켜기]만 누르면 알아서 맞춰요 (1.0.13 이상).`r`n" +
+                    "   앱으로 하는 친구와 처음 오는 친구에게는 [친구 초대 링크 복사]로 새 링크를 보내 주세요. 페이지가 바뀐 모드를 알려 줘요.`r`n")
+                $lblStage.Text = '모드가 바뀌었어요. 앱으로 하는 친구에게는 [친구 초대 링크 복사]로 새 링크를 보내 주세요. (프로그램 쓰는 친구는 알아서 맞춰요)'
+            }
         }
         if ($line -match ': (\S+) joined the game') { $s.players[$Matches[1]] = $true; $s.playedSinceBk = $true; Set-PlayerSeen $s.dir $Matches[1] }
         if ($line -match ': (\S+) left the game') { $s.players.Remove($Matches[1]) }
@@ -1735,11 +1742,20 @@ function Show-ModManager {
 $btnMods.Add_Click({ Show-ModManager })
 
 # ---------------- Security check ----------------
-function ConvertFrom-PropEscape([string]$v) { return [regex]::Replace($v, '\\u([0-9a-fA-F]{4})', { param($m) [string][char][Convert]::ToInt32($m.Groups[1].Value, 16) }) }
+function ConvertFrom-PropEscape([string]$v) {
+    # Java properties escapes: \uXXXX, \n, \t, \r, and a backslash before any other character stands for that character
+    return [regex]::Replace($v, '\\(u[0-9a-fA-F]{4}|.)', { param($m) $x = $m.Groups[1].Value
+            if ($x.Length -eq 5) { return [string][char][Convert]::ToInt32($x.Substring(1), 16) }
+            switch -CaseSensitive ($x) { 'n' { "`n" } 't' { "`t" } 'r' { "`r" } default { $x } } })
+}
 function ConvertTo-PropEscape([string]$v) {
     # Java properties are read as ISO-8859-1 by older servers; \uXXXX escapes keep Korean text intact on every version
     $sb = New-Object Text.StringBuilder
-    foreach ($ch in $v.ToCharArray()) { if ([int]$ch -gt 126) { [void]$sb.AppendFormat('\u{0:x4}', [int]$ch) } else { [void]$sb.Append($ch) } }
+    foreach ($ch in $v.ToCharArray()) {
+        if ([int]$ch -gt 126) { [void]$sb.AppendFormat('\u{0:x4}', [int]$ch) }
+        elseif ($ch -eq [char]10) { [void]$sb.Append('\n') } elseif ($ch -eq [char]13) { [void]$sb.Append('\r') } elseif ($ch -eq [char]92) { [void]$sb.Append('\\') }
+        else { [void]$sb.Append($ch) }
+    }
     return $sb.ToString()
 }
 function Get-Props($d) {
@@ -1977,6 +1993,89 @@ function Show-AddressReset {
 }
 
 # ---------------- is a server really running? (however it was started) ----------------
+# ---------------- the server tells friends' programs what it runs now ----------------
+# Minecraft's server list shows two lines of the server description. The current invitation goes on a line after those,
+# so a friend's copy can ask the server (the same status request the server list makes) whether mods changed since it
+# installed, and catch up without a new link. Anyone who can reach the address could read it, but that is what the
+# server itself shows a connecting game anyway: address, modpack and mod list.
+$MotdSyncTag = 'mcsm-sync:'
+function Get-UserMotd([string]$m) { $i = $m.IndexOf("`n`n$MotdSyncTag"); if ($i -ge 0) { return $m.Substring(0, $i) }; return $m }
+function Set-InviteMotd($d) {
+    $user = Get-UserMotd ([string](Get-Props $d)['motd']); if (-not $user.Trim()) { $user = Split-Path $d -Leaf }
+    $code = Get-JoinCode $d; if (-not $code) { return }
+    # A modpack may set its description from a mod; this one still lands in server.properties, which is what most use
+    Set-Props $d @{ 'motd' = "$user`n`n$MotdSyncTag$code" }
+    $i = Read-Json (Join-Path $d 'server-info.json')
+    $sig = ConvertTo-ModsB64 (Read-JoinCode $code).m
+    $prev = ''; if ($i -and $i.PSObject.Properties['lastMods']) { $prev = [string]$i.lastMods }
+    if ($i -and $i.PSObject.Properties['lastMods'] -and $prev -ne $sig) { $script:modsChangedNote = $true }
+    Set-InfoField $d 'lastMods' $sig
+}
+function Read-VarInt($st) {
+    $v = 0; $shift = 0
+    while ($true) { $b = $st.ReadByte(); if ($b -lt 0) { throw 'closed' }; $v = $v -bor (($b -band 0x7F) -shl $shift); if (-not ($b -band 0x80)) { return $v }; $shift += 7; if ($shift -gt 28) { throw 'bad varint' } }
+}
+function ConvertTo-VarInt([int]$v) { $b = New-Object System.Collections.Generic.List[byte]; do { $t = $v -band 0x7F; $v = $v -shr 7; if ($v) { $t = $t -bor 0x80 }; $b.Add([byte]$t) } while ($v); return , $b.ToArray() }
+function Get-ChatText($o) {
+    # A server description is either text or a chat object ({ text, extra: [...] })
+    if ($null -eq $o) { return '' }; if ($o -is [string]) { return $o }
+    $t = ''; if ($o.PSObject.Properties['text']) { $t = [string]$o.text }
+    if ($o.PSObject.Properties['extra']) { foreach ($x in @($o.extra)) { $t += Get-ChatText $x } }
+    return $t
+}
+function Get-ServerDescription([string]$addr, [int]$timeoutMs = 5000) {
+    # The status request a game's server list sends; nothing logs in
+    $hostName = $addr; $port = 25565
+    if ($addr -match '^(.+):(\d{1,5})$') { $hostName = $Matches[1]; $port = [int]$Matches[2] }
+    if ($hostName -notmatch '^[A-Za-z0-9.-]+$') { return $null }
+    $c = New-Object Net.Sockets.TcpClient
+    try {
+        $iar = $c.BeginConnect($hostName, $port, $null, $null)
+        if (-not $iar.AsyncWaitHandle.WaitOne($timeoutMs)) { return $null }
+        $c.EndConnect($iar); $st = $c.GetStream(); $st.ReadTimeout = $timeoutMs; $st.WriteTimeout = $timeoutMs
+        $hb = [Text.Encoding]::UTF8.GetBytes($hostName)
+        $body = (ConvertTo-VarInt 0) + (ConvertTo-VarInt 767) + (ConvertTo-VarInt $hb.Length) + $hb + [byte[]]@((($port -shr 8) -band 0xFF), ($port -band 0xFF)) + (ConvertTo-VarInt 1)
+        $pkt = [byte[]]((ConvertTo-VarInt $body.Length) + $body + [byte[]](1, 0)); $st.Write($pkt, 0, $pkt.Length)
+        $len = Read-VarInt $st; if ($len -le 0 -or $len -gt 2MB) { return $null }
+        $buf = New-Object byte[] $len; $got = 0
+        while ($got -lt $len) { $n = $st.Read($buf, $got, $len - $got); if ($n -le 0) { return $null }; $got += $n }
+        $ms = New-Object IO.MemoryStream(, $buf)
+        if ((Read-VarInt $ms) -ne 0) { return $null }
+        $sl = Read-VarInt $ms
+        $j = [Text.Encoding]::UTF8.GetString($buf, [int]$ms.Position, $sl) | ConvertFrom-Json
+        return Get-ChatText $j.description
+    }
+    catch { return $null }
+    finally { $c.Close() }
+}
+function Find-HostCode([string]$addr, [string]$name) {
+    # The host's current invitation, read from its running server; $null when it is off or older than 1.0.13
+    $desc = Get-ServerDescription $addr; if (-not $desc) { return $null }
+    $i = $desc.IndexOf($MotdSyncTag); if ($i -lt 0) { return $null }
+    $c = Read-JoinCode $desc.Substring($i + $MotdSyncTag.Length)
+    if (-not $c -or $c.n -ne $name) { return $null }
+    return $c
+}
+function ConvertFrom-ModsB64([string]$b64) {
+    if (-not $b64) { return @() }
+    try { return @([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)) | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_ }) } catch { return @() }
+}
+function Get-JoinChanges($oldMods, $oldLinks, $new) {
+    # What the host changed: Modrinth mods by file, link-only mods by address
+    $om = @{}; foreach ($x in @($oldMods)) { if ($x) { $om["$($x.f)"] = $x } }
+    $nm = @{}; foreach ($x in @($new.m)) { if ($x) { $nm["$($x.f)"] = $x } }
+    $ol = @{}; foreach ($x in @($oldLinks)) { if ($x) { $ol["$($x.u)"] = $x } }
+    $nl = @{}; foreach ($x in @($new.l)) { if ($x) { $nl["$($x.u)"] = $x } }
+    $r = [pscustomobject]@{
+        addMods = @($nm.Keys | Where-Object { -not $om.ContainsKey($_) } | ForEach-Object { $nm[$_] })
+        delMods = @($om.Keys | Where-Object { -not $nm.ContainsKey($_) } | ForEach-Object { $om[$_] })
+        addLinks = @($nl.Keys | Where-Object { -not $ol.ContainsKey($_) } | ForEach-Object { $nl[$_] })
+        delLinks = @($ol.Keys | Where-Object { -not $nl.ContainsKey($_) } | ForEach-Object { $ol[$_] })
+    }
+    $r | Add-Member -NotePropertyName any -NotePropertyValue ([bool]($r.addMods.Count + $r.delMods.Count + $r.addLinks.Count + $r.delLinks.Count))
+    return $r
+}
+
 function Get-LevelDir($d) { $lv = (Get-Props $d)['level-name']; if (-not $lv) { $lv = 'world' }; return Join-Path $d $lv }
 function Test-ServerRunning($d) {
     if ($script:srv -and $script:srv.dir -eq $d) { return $true }
@@ -2420,7 +2519,7 @@ function Show-ServerSettings {
         $f.Controls.Add($c); $ctl[$key] = @{ kind = 'check'; c = $c }; $script:rowY += 32
     }
     Row '서버 설명 (목록에 보이는 글)'
-    $motd = New-Ctl TextBox 275 $script:rowY 305 28; $motd.Text = $pr['motd']; $f.Controls.Add($motd); $script:rowY += 36
+    $motd = New-Ctl TextBox 275 $script:rowY 305 28; $motd.Text = Get-UserMotd ([string]$pr['motd']); $f.Controls.Add($motd); $script:rowY += 36
     Add-Combo 'difficulty' '난이도' @(@('peaceful', '평화로움 (몬스터 없음)'), @('easy', '쉬움'), @('normal', '보통'), @('hard', '어려움')) 'normal'
     Add-Combo 'gamemode' '처음 들어온 사람의 게임 모드' @(@('survival', '서바이벌'), @('creative', '크리에이티브'), @('adventure', '모험'), @('spectator', '관전')) 'survival'
     Add-Num 'max-players' '최대 인원' 1 100 20
@@ -2640,11 +2739,15 @@ function Complete-GameJob([bool]$ok) {
     $gd = $script:gameJob.gameDir
     if ($kind -eq 'join') {
         $links = @(Read-JsonList (Join-Path $gd 'mod-links.json') | Where-Object { (Test-ModUrl $_.u) })
+        # Links as they were before this install, when there was one: what the host added or removed since
+        $prevF = Join-Path $gd 'mod-links.prev.json'; $ch = $null
+        if (Test-Path -LiteralPath $prevF) { $ch = Get-JoinChanges @() @(Read-JsonList $prevF) ([pscustomobject]@{ m = @(); l = $links }) }
         $have = @(Get-ChildItem -LiteralPath (Join-Path $gd $ManualModsDir) -Filter '*.jar' -File -ErrorAction SilentlyContinue).Count
-        if ($links.Count -and $have -lt $links.Count) {
+        if (($links.Count -and $have -lt $links.Count) -or ($ch -and $ch.any)) {
             $mm = Read-Json (Join-Path $gd 'mcsm-game.json')
-            [void](Show-JoinGuide ([pscustomobject]@{ n = $mm.name; k = $mm.version; l = $links; m = @() }) $null '' $gd)
+            [void](Show-JoinGuide ([pscustomobject]@{ n = $mm.name; k = $mm.version; l = $links; m = @() }) $null '' $gd $ch)
         }
+        Remove-Item -LiteralPath $prevF -Force -ErrorAction SilentlyContinue
         $n = Sync-ManualMods $gd; if ($n) { $txtJoinLog.AppendText("직접 받은 모드 $($n)개를 넣었어요.`r`n") }
     }
     # The game runs these mods on this PC too: same check as the server's before the launcher opens
@@ -2900,7 +3003,11 @@ function Start-JoinGame($c, [string]$addr, [int]$ram, $modsB64 = $null) {   # un
     $mods = $modsB64; if ($null -eq $mods) { $mods = ConvertTo-ModsB64 $c.m }
     # Mods only reachable by link: kept beside the game, so [▶ 게임 켜기] next time still knows them
     New-Item -ItemType Directory -Force (Join-Path $gd $ManualModsDir) | Out-Null
-    if ($c.PSObject.Properties['l']) { [IO.File]::WriteAllText((Join-Path $gd 'mod-links.json'), (ConvertTo-Json -InputObject @($c.l) -Depth 3), $Utf8) }
+    if ($c.PSObject.Properties['l']) {
+        $lf = Join-Path $gd 'mod-links.json'
+        if (Test-Path -LiteralPath $lf) { Copy-Item -LiteralPath $lf -Destination (Join-Path $gd 'mod-links.prev.json') -Force }
+        [IO.File]::WriteAllText($lf, (ConvertTo-Json -InputObject @($c.l) -Depth 3), $Utf8)
+    }
     $script:gameJob = @{ gameDir = $gd }
     $tabs.SelectedTab = $tabJoin
     Start-InstallJob "-Client -PackId $($c.p) -VersionKey `"$($c.k)`" -Name `"$($c.n)`" -GameDir `"$gd`" -Address `"$addr`" -AddedMods `"$mods`" -GameRamGB $ram" 'join'
@@ -2926,13 +3033,18 @@ function Save-ModrinthMods($list, [string]$dir, $log) {
     }
     return $n
 }
-function Show-JoinGuide($c, $p, [string]$addr, [string]$gd) {
+function Show-JoinGuide($c, $p, [string]$addr, [string]$gd, $changes = $null) {
     # $gd empty: a CurseForge modpack, installed with the CurseForge app. Otherwise this program's game folder,
     # where only the link-only mods are left to do. Returns $true when the game may start.
     $cf = -not $gd
     $script:gLinks = @(); if ($c.PSObject.Properties['l']) { $script:gLinks = @($c.l | Where-Object { $_ }) }
     $script:gAuto = @(); if ($c.PSObject.Properties['m']) { $script:gAuto = @($c.m | Where-Object { $_ }) }
-    $script:gAddr = $addr; $script:gPack = $p
+    $script:gAddr = $addr; $script:gPack = $p; $script:gCode = $c
+    if ($changes -and $changes.any) {
+        # Only what the host changed since last time
+        $script:gAuto = @($changes.addMods)
+        if (@($changes.addLinks).Count) { $script:gLinks = @($changes.addLinks) } elseif ($cf) { $script:gLinks = @() }
+    }
     $f = New-Object Windows.Forms.Form
     $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.Font = $font
     $y = 12
@@ -2953,7 +3065,18 @@ function Show-JoinGuide($c, $p, [string]$addr, [string]$gd) {
         $g0 = New-Ctl Label 15 $y 740 44 "모드팩과 [자동] 모드는 준비됐어요. 아래 모드는 방장이 Modrinth 밖에서 받은 거라,`n원본 페이지에서 직접 받아서 넣어야 해요. (파일을 대신 받아 오면 재배포라 문제가 될 수 있어요)"; $y += 52
         $f.Controls.Add($g0)
     }
-    $gt = New-Ctl Label 15 $y 740 24 '받아서 넣을 모드'; if ($cf) { $gt.Text = '④ 방장이 추가한 모드 (꼭 넣어야 접속돼요)' }; $y += 26
+    $gt = New-Ctl Label 15 $y 740 24 '받아서 넣을 모드'; if ($cf) { $gt.Text = '④ 방장이 추가한 모드 (꼭 넣어야 접속돼요)' }
+    if ($changes -and $changes.any) {
+        $gt.Text = '방장이 새로 넣은 모드'
+        $gone = @(@($changes.delMods | ForEach-Object { "$($_.f)" }) + @($changes.delLinks | ForEach-Object { "$($_.t)" }))
+        if ($gone.Count) {
+            $gx = New-Ctl Label 15 $y 740 44 ("방장이 뺀 모드 (mods 폴더에서 지워 주세요): " + ($gone -join ', ')); $gx.ForeColor = [Drawing.Color]::Firebrick
+            if ($cf) { $gx.Text = "방장이 뺀 모드: " + ($gone -join ', ') + "`n([자동] 모드 넣기를 누르면 [자동] 모드는 알아서 지워요. 나머지는 mods 폴더에서 지워 주세요)" }
+            elseif (@($changes.delLinks).Count) { $gx.Text = "방장이 뺀 모드: " + ($gone -join ', ') + "`n[넣을 폴더 열기]로 열리는 폴더에서 그 파일을 지워 주세요." }
+            $f.Controls.Add($gx); $y += 48
+        }
+    }
+    $y += 26
     $lb = New-Ctl ListBox 15 $y 740 120; $lb.HorizontalScrollbar = $true; $y += 126
     foreach ($m in $script:gAuto) { [void]$lb.Items.Add("[자동] $($m.f)   ([자동] 모드 넣기를 누르면 Modrinth에서 받아요)") }
     foreach ($l in $script:gLinks) { [void]$lb.Items.Add("[링크] $($l.t)   →  $(Get-UrlSite $l.u)") }
@@ -2966,6 +3089,10 @@ function Show-JoinGuide($c, $p, [string]$addr, [string]$gd) {
     else { $note.Text = "[선택한 모드 페이지 열기] → 이 마인크래프트 버전에 맞는 .jar 파일을 받아서 [넣을 폴더 열기]로 열린 폴더에 넣어요.`n게임을 켤 때마다 이 폴더의 모드를 알아서 넣어 줘요. (게임을 다시 설치해도 안 지워져요)" }
     $f.Controls.AddRange(@($gt, $lb, $bOpen, $bDir, $bAuto, $note))
     $script:guideDir = $null; if (-not $cf) { $script:guideDir = Join-Path $gd $ManualModsDir }
+    $script:gChanges = $changes
+    # A CurseForge game this program guided: its mods folder, once chosen, is remembered for next time
+    $cfRec = $null
+    if ($cf) { $cfRec = Read-Json (Join-Path $GameRoot "cf-$($c.n)\mcsm-cf.json"); if ($cfRec -and $cfRec.modsDir -and (Test-Path -LiteralPath "$($cfRec.modsDir)")) { $script:guideDir = "$($cfRec.modsDir)" } }
     $script:gLb = $lb; $script:gNote = $note; $script:gForm = $f
     $bOpen.Add_Click({
             $k = $script:gLb.SelectedIndex; $na = $script:gAuto.Count
@@ -2981,6 +3108,7 @@ function Show-JoinGuide($c, $p, [string]$addr, [string]$gd) {
             if (-not $script:guideDir) { $script:guideDir = Select-CurseForgeModsDir $script:gForm $script:gPack.name; if (-not $script:guideDir) { return } }
             $script:gForm.Cursor = 'WaitCursor'
             $n = Save-ModrinthMods $script:gAuto $script:guideDir { param($t) $script:gNote.Text = $t; [Windows.Forms.Application]::DoEvents() }
+            if ($script:gChanges) { foreach ($x in @($script:gChanges.delMods)) { if ("$($x.f)" -match '^[A-Za-z0-9 ._+()\[\]-]+\.jar$') { Remove-Item -LiteralPath (Join-Path $script:guideDir "$($x.f)") -Force -ErrorAction SilentlyContinue } } }
             [void](Confirm-ModsSafe $script:guideDir $script:guideDir (Join-Path $script:guideDir 'mod-scan.json'))
             $script:gForm.Cursor = 'Default'
             $script:gNote.Text = "[자동] 모드 $($n)개를 넣었어요: $($script:guideDir)"
@@ -3002,6 +3130,14 @@ function Show-JoinGuide($c, $p, [string]$addr, [string]$gd) {
     }
     $f.ClientSize = New-Object Drawing.Size(770, ($y + 8))
     [void]$f.ShowDialog($form)
+    if ($cf) {
+        # Listed under 설치해 둔 친구 서버, so [▶ 게임 켜기] can check later what the host changed
+        $rd = Join-Path $GameRoot "cf-$($c.n)"; New-Item -ItemType Directory -Force $rd | Out-Null
+        $rec = [ordered]@{ kind = 'curseforge'; name = $c.n; pack = $c.p; packName = $p.name; version = $c.k; versionKey = $c.k; address = $addr
+            addedMods = (ConvertTo-ModsB64 @($script:gCode.m)); links = @($script:gCode.l); modsDir = "$($script:guideDir)" }
+        [IO.File]::WriteAllText((Join-Path $rd 'mcsm-cf.json'), (ConvertTo-Json -InputObject $rec -Depth 4), $Utf8)
+        Update-JoinedList
+    }
     return ($f.Tag -eq 'go')
 }
 function Select-CurseForgeModsDir($owner, [string]$packName) {
@@ -3034,18 +3170,51 @@ function Update-JoinedList {
         $script:joined += , @($g.FullName, $m)
         [void]$lstJoined.Items.Add("$($m.name)  ($($m.version))")
     }
+    foreach ($g in @(Get-ChildItem -LiteralPath $GameRoot -Directory -Filter 'cf-*' -ErrorAction SilentlyContinue)) {
+        $m = Read-Json (Join-Path $g.FullName 'mcsm-cf.json'); if (-not $m) { continue }
+        $script:joined += , @($g.FullName, $m)
+        [void]$lstJoined.Items.Add("$($m.name)  ($($m.version), CurseForge 앱)")
+    }
     if ($lstJoined.Items.Count) { $lstJoined.SelectedIndex = 0 }
 }
 $btnJoinAgain.Add_Click({
         if ($lstJoined.SelectedIndex -lt 0) { Show-Msg '목록에서 친구 서버를 고르세요.'; return }
-        $m = $script:joined[$lstJoined.SelectedIndex][1]
+        $gdir = $script:joined[$lstJoined.SelectedIndex][0]; $m = $script:joined[$lstJoined.SelectedIndex][1]
+        # Ask the host's server what it runs now: changed mods are caught up here, without a new link
+        $txtJoinLog.AppendText("방장 서버에 바뀐 모드가 있는지 확인하는 중... ($($m.address))`r`n"); $form.Cursor = 'WaitCursor'; Pump 50
+        $new = Find-HostCode "$($m.address)" "$($m.name)"; $form.Cursor = 'Default'
+        $addr = "$($m.address)"; if ($new -and $new.a) { $addr = "$($new.a)" }
+        if ($m.kind -eq 'curseforge') {
+            $p = $packs | Where-Object { $_.id -eq $m.pack } | Select-Object -First 1; if (-not $p) { $p = [pscustomobject]@{ name = $m.packName; page = '' } }
+            if (-not $new) { [Windows.Forms.Clipboard]::SetText($addr); Show-Msg "방장 서버가 꺼져 있거나 확인할 수 없었어요. (모드가 바뀌었는지 모르는 채로 해요)`n`nCurseForge 앱에서 '$($m.packName)'을(를) Play → 멀티플레이 → 서버 접속.`n주소를 복사해 뒀어요: $addr"; return }
+            if ($new.p -ne $m.pack -or $new.k -ne $m.versionKey) { Show-Msg "방장이 모드팩을 바꿨어요 ('$($new.k)'). 새 버전을 CurseForge 앱으로 설치하는 순서를 다시 보여 줄게요."; [void](Show-JoinGuide $new ($packs | Where-Object { $_.id -eq $new.p } | Select-Object -First 1) $addr ''); return }
+            $ch = Get-JoinChanges (ConvertFrom-ModsB64 ([string]$m.addedMods)) @($m.links) $new
+            if (-not $ch.any) { [Windows.Forms.Clipboard]::SetText($addr); Show-Msg "방장 서버와 모드가 같아요.`n`nCurseForge 앱에서 '$($m.packName)'을(를) Play → 멀티플레이 → 서버 접속.`n주소를 복사해 뒀어요: $addr"; return }
+            $txtJoinLog.AppendText("방장이 모드를 바꿨어요: 새 모드 $($ch.addMods.Count + $ch.addLinks.Count)개, 뺀 모드 $($ch.delMods.Count + $ch.delLinks.Count)개`r`n")
+            [void](Show-JoinGuide $new $p $addr '' $ch); return
+        }
+        if ($new) {
+            $newB64 = ConvertTo-ModsB64 $new.m
+            $oldLinks = @(Read-JsonList (Join-Path $gdir 'mod-links.json'))
+            $ch = Get-JoinChanges @() $oldLinks ([pscustomobject]@{ m = @(); l = @($new.l) })
+            if ($new.p -ne $m.pack -or $new.k -ne $m.versionKey -or $newB64 -ne [string]$m.addedMods -or $ch.any) {
+                $txtJoinLog.AppendText("방장이 모드(또는 모드팩 버전)를 바꿨어요. 알아서 맞출게요.`r`n")
+                Start-JoinGame $new $addr ([int]$m.ramGB); return
+            }
+            $txtJoinLog.AppendText("방장 서버와 모드가 같아요.`r`n")
+        }
+        else { $txtJoinLog.AppendText("방장 서버가 꺼져 있거나 확인할 수 없어서 지난번 그대로 켜요.`r`n") }
         # The same added-mods value as last time, untouched, so an unchanged game is recognised and left alone
         $c = [pscustomobject]@{ p = $m.pack; k = $m.versionKey; n = $m.name }
-        Start-JoinGame $c $m.address ([int]$m.ramGB) ([string]$m.addedMods)
+        Start-JoinGame $c $addr ([int]$m.ramGB) ([string]$m.addedMods)
     })
 $btnJoinDel.Add_Click({
         if ($lstJoined.SelectedIndex -lt 0) { return }
         $g = $script:joined[$lstJoined.SelectedIndex]
+        if ($g[1].kind -eq 'curseforge') {
+            if (Ask-YesNo "'$($g[1].name)' 을(를) 목록에서 뺄까요?`n(CurseForge 앱의 모드팩은 그대로예요. 앱에서 지우면 돼요)") { Remove-Item -LiteralPath $g[0] -Recurse -Force -ErrorAction SilentlyContinue; Update-JoinedList }
+            return
+        }
         if (-not (Ask-YesNo "'$($g[1].name)' 게임 폴더를 지울까요?`n(모드팩 파일과 이 서버용 설정, 스크린샷이 지워져요. 서버의 월드는 방장 PC에 있어서 괜찮아요)")) { return }
         if (Test-GameRunning $g[0]) { Show-Msg '이 서버용 마인크래프트가 켜져 있어요. 게임을 끈 다음 다시 해 주세요.'; return }
         if (-not (Close-McLauncher)) { return }

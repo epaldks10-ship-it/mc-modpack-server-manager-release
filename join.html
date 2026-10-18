@@ -69,6 +69,13 @@
     </dl>
   </section>
 
+  <!-- App users get no automatic catch-up: the browser remembers what this invitation said last time -->
+  <section class="warn hidden" id="changes">
+    <b>지난번에 이 서버 초대를 열었을 때와 달라졌어요.</b> 아래대로 맞춰야 접속돼요.
+    <ul id="chList"></ul>
+    <small>프로그램을 쓰면 [▶ 게임 켜기]만 눌러도 알아서 맞춰요.</small>
+  </section>
+
   <!-- With the program (Windows): the default view -->
   <section class="card" id="steps">
     <div class="step"><div class="num">1</div><div>
@@ -249,6 +256,34 @@
       links.forEach(function (x) { $("mMods").appendChild(linkItem(String(x.t || "모드"), x.u)); });
     }
     addressStep(c, "mAddr", "mCopyAddr", "mStatus");
+
+    // ---- what changed since this browser last opened an invitation to the same server ----
+    try {
+      var key = "mcsm-last-" + String(c.n || "");
+      var prev = JSON.parse(localStorage.getItem(key) || "null");
+      var now = { k: String(c.k), m: mods.map(function (x) { return { p: x.p, f: String(x.f) }; }), l: links.map(function (x) { return { t: String(x.t || "모드"), u: x.u }; }) };
+      if (prev && Array.isArray(prev.m) && Array.isArray(prev.l)) {
+        var had = {}, has = {};
+        prev.m.forEach(function (x) { had["m:" + x.f] = x; }); prev.l.forEach(function (x) { had["l:" + x.u] = x; });
+        now.m.forEach(function (x) { has["m:" + x.f] = x; }); now.l.forEach(function (x) { has["l:" + x.u] = x; });
+        var items = 0;
+        if (prev.k !== now.k) { var li = document.createElement("li"); li.textContent = "모드팩 버전이 바뀌었어요: " + prev.k + " → " + now.k + " (앱에서 모드팩을 새 버전으로 업데이트해 주세요)"; $("chList").appendChild(li); items++; }
+        Object.keys(has).forEach(function (k) {
+          if (had[k]) return;
+          var x = has[k], url = k.charAt(0) === "m" ? "https://modrinth.com/project/" + x.p : x.u;
+          if (!URL_OK.test(url)) return;
+          var li = linkItem(k.charAt(0) === "m" ? x.f : x.t, url);
+          li.insertBefore(document.createTextNode("새로 넣기: "), li.firstChild); $("chList").appendChild(li); items++;
+        });
+        Object.keys(had).forEach(function (k) {
+          if (has[k]) return;
+          var li = document.createElement("li"); li.textContent = "빠졌어요 (mods 폴더에서 지워 주세요): " + (k.charAt(0) === "m" ? had[k].f : had[k].t);
+          $("chList").appendChild(li); items++;
+        });
+        if (items) show("changes");
+      }
+      localStorage.setItem(key, JSON.stringify(now));
+    } catch (e) { /* private window or storage blocked: the steps below still say everything */ }
   }).catch(function () {
     // Still usable: the program can read the code even if this browser can't show what's in it
     $("sub").textContent = "아래 순서대로 하면 돼요.";

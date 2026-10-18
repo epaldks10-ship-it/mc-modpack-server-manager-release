@@ -1,11 +1,11 @@
 {
-    "version":  "1.0.12",
+    "version":  "1.0.13",
     "date":  "2026-10-18",
-    "notes":  "모드팩에 맞는 서버 기본 설정, 모드 악성코드 검사, PC 밖 백업 복사, 방장만 관리자, Playit 설정 안내 개선, 친구에게 파일 대신 공식 링크로 안내(재배포 방지), 화이트리스트 읽기 오류 수정.",
+    "notes":  "방장이 모드를 바꾸면 친구는 [게임 켜기]만 눌러도 알아서 맞춰요(CurseForge 모드팩 포함). 앱으로 하는 친구는 초대 페이지에서 지난번과 달라진 점을 볼 수 있어요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "1c3ca198860d05b55f0f93cd8482268412f915b628a6cb00a9d86aebefcfec1e"
+                      "sha256":  "90232d5f1c755b14669ba7205ce24324f29b7106f3dd39397b30a1edfa8ef568"
                   },
                   {
                       "path":  "install.ps1",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "6f25d349e9cbb4f148cb49fb42c62d5b1901d171d0e75f4554e1fcac2782b8a2"
+                      "sha256":  "596fc83777f5b2da9b1fa546d6f1a2cefc2f85bce0883c854c5cc3bdec080c37"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "123e6d68829e78385839a990152031e31eb7f5ad51f444e9ffbf758dbde7175c"
+                      "sha256":  "c48e6e8e49a7201f328a87456445464807aaa2ea2826ea6aa0aa64dcb504d540"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "5458cb3be5a7dd0933c1b890831e59ac2e7b6d44b3fcd00f1a75f8dd3d4a7eb1"
+                     "sha256":  "d348e88e177add8930bfd8a7330ad6860bfc12465a622134aa4f7ee48cce35a5"
                  }
 }
