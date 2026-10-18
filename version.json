@@ -1,11 +1,11 @@
 {
-    "version":  "1.0.10",
-    "date":  "2026-10-17",
-    "notes":  "Playit 비밀 키만 저장하면 친구용 주소를 Playit에서 자동으로 가져와요(주소를 직접 붙여 넣지 않아도 돼요). 친구 쪽 접속 코드에도 주소가 자동으로 들어가요. 친구 서버 목록 글씨 잘림도 고쳤어요.",
+    "version":  "1.0.11",
+    "date":  "2026-10-18",
+    "notes":  "친구 초대 링크(짧고 암호화됨), 모르는 사람 접속 막기, 서버 켜 둔 채 3시간마다 자동 백업, 여럿이 할 때 추천값과 서버 메모리 설정을 넣었어요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "fb7e3d65dc02e9cf0ba82f43e80aa1e1ef90ed02caa93fd3cf6049b908ffc67c"
+                      "sha256":  "8d35cc56b5b3503510bfca71e7f569665f2f943b13621200efe1e96a49b2465a"
                   },
                   {
                       "path":  "install.ps1",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "87f169197c2c8228d588445970a7dc58e741a2accd3bda039e52afc1cca54ef5"
+                      "sha256":  "2b6ca9e40b4b86c846e96526190b2415397278e3c52c67eddf74793f147cf9ee"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "aeff856af84f6fd019532674cd9e77aaa9865ccff9f4a412c408323a66753168"
+                      "sha256":  "b69dacb21950a555c32812ef66ec2153e340ed5f0e4b022b3023005688907b6b"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "c27e78f287a27854b3bec8d7993a77f43a63b144d0997723cf5e86a816561f1d"
+                     "sha256":  "3c727683c83955823d4acb8adbafc7f2f8f22f4f87a77f145064f2b3d326877a"
                  }
 }
