@@ -911,6 +911,212 @@ function Add-ClientOnlyRequired([string]$mods, $li) {
     }
 }
 
+function Invoke-Pooled($items, [scriptblock]$work, [int]$threads = 8) {
+    # $work for every item, several at a time; one result (or $null) per item, in the items' order
+    $out = New-Object System.Collections.Generic.List[object]
+    $pool = [RunspaceFactory]::CreateRunspacePool(1, $threads); $pool.Open()
+    try {
+        $jobs = foreach ($it in @($items)) { $ps = [PowerShell]::Create(); $ps.RunspacePool = $pool; [void]$ps.AddScript($work).AddArgument($it); @{ ps = $ps; h = $ps.BeginInvoke() } }
+        foreach ($j in @($jobs)) {
+            $r = $null; try { $r = @($j.ps.EndInvoke($j.h)) } catch { }
+            $out.Add($(if ($r -and $r.Count) { $r[0] } else { $null })); $j.ps.Dispose()
+        }
+    }
+    finally { $pool.Close() }
+    return , $out
+}
+function Get-CfMainFile($pack, $ver) {
+    # The client modpack is the main file that the server pack hangs under as an "additional file"
+    if ($ver.PSObject.Properties['cfFile'] -and "$($ver.cfFile)" -match '^\d+$') { return [long]$ver.cfFile }
+    if ($ver.url -notmatch '/files/(\d+)/(\d+)/') { return 0 }
+    $sid = [long]$Matches[1] * 1000 + [long]$Matches[2]
+    for ($page = 0; $page -lt 4; $page++) {
+        $list = Invoke-RestMethod "https://www.curseforge.com/api/v1/mods/$($pack.cfId)/files?pageIndex=$page&pageSize=50&sort=dateCreated&sortDescending=true&removeAlphas=false"
+        foreach ($m in @($list.data | Where-Object { [long]$_.id -lt $sid } | Sort-Object { [long]$_.id } -Descending | Select-Object -First 4)) {
+            $add = Invoke-RestMethod "https://www.curseforge.com/api/v1/mods/$($pack.cfId)/files/$($m.id)/additional-files"
+            if (@($add.data | Where-Object { [long]$_.id -eq $sid }).Count) { return [long]$m.id }
+        }
+        if (@($list.data).Count -lt 50) { break }
+    }
+    return 0
+}
+function Add-CfClientFiles($pack, [string]$label, [string]$stage, $li) {
+    # A server pack leaves out what only the game needs (Sunlit Valley 4.1.5A: 56 of 367 files - embeddium, oculus,
+    # resource packs...), and guessing them one error at a time never ends. The client modpack's manifest.json lists
+    # every file its author meant the game to have: whatever the server pack lacks comes from CurseForge's own
+    # download link, the very file the author picked.
+    $ver = $pack.versions | Where-Object label -eq $label | Select-Object -First 1
+    if (-not $ver -or "$($pack.cfId)" -notmatch '^\d+$') { return }
+    Step '모드팩의 게임용 파일 목록 확인 중'
+    $main = 0; try { $main = Get-CfMainFile $pack $ver } catch { }
+    if (-not $main) { Info '(게임용 모드팩 목록을 찾지 못했어요. 빠진 모드는 다른 방법으로 찾아요)'; return }
+    $zip = Join-Path $Cache "cf-client-$main.zip"
+    try { Get-Download "https://www.curseforge.com/api/v1/mods/$($pack.cfId)/files/$main/download" $zip } catch { Info '(게임용 모드팩을 받지 못했어요. 빠진 모드는 다른 방법으로 찾아요)'; return }
+    $mods = Join-Path $stage 'mods'
+    $top = @{}
+    foreach ($jar in @(Get-ChildItem -LiteralPath $mods -Filter '*.jar' -File)) {
+        $z = $null; try { $z = [IO.Compression.ZipFile]::OpenRead($jar.FullName); foreach ($i in (Get-JarModInfo $z $li.loader).ids) { $top[$i] = $true } } catch { } finally { if ($z) { $z.Dispose() } }
+    }
+    $manifest = $null; $z = $null; $nOver = 0
+    try {
+        $z = [IO.Compression.ZipFile]::OpenRead($zip)
+        $sr = New-Object IO.StreamReader($z.GetEntry('manifest.json').Open()); $manifest = $sr.ReadToEnd() | ConvertFrom-Json; $sr.Dispose()
+        # The pack's own game files (client configs, resource packs, options) are laid over the server pack's
+        $ov = [string]$manifest.overrides; if (-not $ov) { $ov = 'overrides' }
+        foreach ($e in @($z.Entries)) {
+            if (-not $e.FullName.StartsWith("$ov/") -or $e.FullName.EndsWith('/')) { continue }
+            $rel = $e.FullName.Substring($ov.Length + 1)
+            if ($rel -match '(^|/)\.\.(/|$)' -or $rel -match '^[\\/]' -or $rel.Contains(':') -or $rel.Contains('\')) { continue }
+            $dst = Join-Path $stage ($rel -replace '/', '\')
+            $isJar = $rel -match '^mods/[^/]+\.jar$'
+            if ($isJar -and (Test-Path -LiteralPath $dst)) { continue }
+            New-Item -ItemType Directory -Force (Split-Path $dst -Parent) | Out-Null
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $dst, $true); $nOver++
+            if ($isJar) {
+                # A mod bundled in the pack itself: kept only if nothing here already provides it
+                $zj = $null; $gives = @(); try { $zj = [IO.Compression.ZipFile]::OpenRead($dst); $gives = @((Get-JarModInfo $zj $li.loader).ids) } catch { } finally { if ($zj) { $zj.Dispose() } }
+                if (@($gives | Where-Object { $top.ContainsKey($_) }).Count) { Remove-Item -LiteralPath $dst -Force } else { foreach ($g in $gives) { $top[$g] = $true } }
+            }
+        }
+    }
+    catch { Info "(게임용 모드팩을 읽지 못했어요: $($_.Exception.Message))" }
+    finally { if ($z) { $z.Dispose() } }
+    if (-not $manifest -or -not $manifest.files) { Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue; return }
+    if ($nOver) { Info "모드팩의 게임용 설정 파일 $($nOver)개를 넣었어요." }
+
+    # File names, asked once per pack version (kept in the cache)
+    $files = @($manifest.files | Where-Object { $_.required -ne $false -and "$($_.projectID)" -match '^\d+$' -and "$($_.fileID)" -match '^\d+$' })
+    $namesFile = Join-Path $Cache "cf-client-$main-names.json"
+    $names = @{}
+    if (Test-Path -LiteralPath $namesFile) { try { (Get-Content -LiteralPath $namesFile -Raw -Encoding UTF8 | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $names[$_.Name] = [string]$_.Value } } catch { } }
+    $ask = @($files | Where-Object { -not $names.ContainsKey("$($_.fileID)") })
+    if ($ask.Count) {
+        $res = Invoke-Pooled $ask { param($f)
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            try { [string](Invoke-RestMethod "https://www.curseforge.com/api/v1/mods/$($f.projectID)/files/$($f.fileID)" -TimeoutSec 30).data.fileName } catch { $null } }
+        for ($i = 0; $i -lt $ask.Count; $i++) { if ($res[$i]) { $names["$($ask[$i].fileID)"] = [string]$res[$i] } }
+        [IO.File]::WriteAllText($namesFile, ($names | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
+    }
+    $have = @{}
+    foreach ($d in 'mods', 'resourcepacks', 'shaderpacks', '_server_only_mods') { Get-ChildItem -LiteralPath (Join-Path $stage $d) -File -ErrorAction SilentlyContinue | ForEach-Object { $have[$_.Name] = $d } }
+    $want = @(); $back = 0
+    foreach ($f in $files) {
+        $n = $names["$($f.fileID)"]
+        if (-not $n) { continue }
+        # Set aside as server-only, yet the pack wants it in the game
+        if ($have[$n] -eq '_server_only_mods') { Move-Item -LiteralPath (Join-Path $stage "_server_only_mods\$n") -Destination $mods -Force; $back++; continue }
+        if ($have.ContainsKey($n) -or $n -notmatch '^[^\\/:*?"<>|]+\.(jar|zip)$') { continue }
+        $want += [pscustomobject]@{ p = [string]$f.projectID; id = [string]$f.fileID; n = $n }
+    }
+    if (-not $want.Count) { Info '게임용 모드는 서버팩에 다 들어 있어요.'; return }
+    Step "게임에만 필요한 파일 $($want.Count)개 받는 중 (CurseForge)"
+    $dl = Join-Path $Cache "cf-client-$main"; New-Item -ItemType Directory -Force $dl | Out-Null
+    $res = Invoke-Pooled @($want | ForEach-Object { @{ url = "https://www.curseforge.com/api/v1/mods/$($_.p)/files/$($_.id)/download"; out = (Join-Path $dl $_.n) } }) { param($a)
+        if (Test-Path -LiteralPath $a.out) { return 'ok' }
+        $tmp = "$($a.out).part"
+        & curl.exe -L --fail --retry 2 --proto-redir '=https' -s -o $tmp $a.url 2>$null
+        if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $tmp)) { Move-Item -LiteralPath $tmp -Destination $a.out -Force; 'ok' } else { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } }
+    $nMods = 0; $nPacks = 0; $failed = @()
+    for ($i = 0; $i -lt $want.Count; $i++) {
+        $w = $want[$i]; $src = Join-Path $dl $w.n
+        if ($res[$i] -ne 'ok' -or -not (Test-Path -LiteralPath $src)) { $failed += $w.n; continue }
+        $z = $null; $kind = ''; $gives = @(); $broken = $false
+        try {
+            $z = [IO.Compression.ZipFile]::OpenRead($src)
+            if ($w.n -like '*.jar') { $kind = 'mods'; $gives = @((Get-JarModInfo $z $li.loader).ids) }
+            elseif (@($z.Entries | Where-Object { $_.FullName -like 'shaders/*' }).Count) { $kind = 'shaderpacks' }
+            elseif ($z.GetEntry('pack.mcmeta') -and -not @($z.Entries | Where-Object { $_.FullName -like 'data/*' }).Count) { $kind = 'resourcepacks' }
+        }
+        catch { $broken = $true }
+        finally { if ($z) { $z.Dispose() } }
+        if ($broken) { Remove-Item -LiteralPath $src -Force -ErrorAction SilentlyContinue; $failed += $w.n; continue }
+        if (-not $kind) { continue }   # a data pack or the like: not something a game folder takes
+        if ($kind -eq 'mods' -and @($gives | Where-Object { $top.ContainsKey($_) }).Count) { continue }   # already here as another file
+        $to = Join-Path $stage $kind; New-Item -ItemType Directory -Force $to | Out-Null
+        Copy-Item -LiteralPath $src -Destination $to -Force
+        if ($kind -eq 'mods') { foreach ($g in $gives) { $top[$g] = $true }; $nMods++ } else { $nPacks++ }
+    }
+    Info "모드팩이 게임에 넣으라고 한 파일을 넣었어요: 모드 $($nMods + $back)개, 리소스팩·셰이더 $($nPacks)개"
+    if ($failed.Count) { Info "받지 못한 파일 $($failed.Count)개: $(@($failed | Select-Object -First 8) -join ', ') (게임이 안 켜지면 이 이름을 알려 주세요)" }
+}
+
+function Get-ModCrash([string]$gd, $old) {
+    # The newest "Error loading mods" report written since this game folder was last set up, read for what went wrong
+    if (-not $old) { return $null }
+    $since = [datetime]::MaxValue
+    if ($old.PSObject.Properties['installedAt'] -and $old.installedAt) { try { $since = [datetime]::Parse([string]$old.installedAt) } catch { } }
+    elseif ($old.installed) { $t = [datetime]::MinValue; if ([datetime]::TryParseExact([string]$old.installed, 'yyyy-MM-dd HH:mm', $null, 'None', [ref]$t)) { $since = $t.AddMinutes(1) } }
+    $f = Get-ChildItem -LiteralPath (Join-Path $gd 'crash-reports') -Filter 'crash-*-fml.txt' -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -gt $since -and $_.Name -ne "$($old.crashFixed)" } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $f) { return $null }
+    $text = [IO.File]::ReadAllText($f.FullName)
+    $c = @{ file = $f.Name; failed = @(); needs = @() }
+    # "Mod waterframes requires watermedia 2.1.34 or above, and below 2.2 / Currently, watermedia is 3.0.0.23"
+    foreach ($m in [regex]::Matches($text, '(?i)Mod (\S+) requires (\S+) [^\r\n]*\s+Currently, (\S+) is ([^\r\n]+)')) {
+        $c.needs += @{ mod = $m.Groups[1].Value; dep = $m.Groups[2].Value; now = $m.Groups[4].Value.Trim() }
+    }
+    # "Mod File: .../mods/x.jar / Failure message: Sodium Options API has failed... NoClassDefFoundError: org/embeddedt/..."
+    foreach ($m in [regex]::Matches($text, '(?is)Mod File: ([^\r\n]+?\.jar)\s*[\r\n]+\s*Failure message: (.*?)(?=\r?\n\s*Mod Version:|\r?\n\s*Exception message:|\r?\n\s*\r?\n)')) {
+        $msg = $m.Groups[2].Value
+        if ($msg -match '(?i)requires \S+ ') { continue }
+        $cls = ''; if ($msg -match '(?:NoClassDefFoundError|ClassNotFoundException):\s*([A-Za-z0-9_$./]+)') { $cls = $Matches[1] }
+        $c.failed += @{ file = (($m.Groups[1].Value -split '[\\/]')[-1]); cls = $cls }
+    }
+    if (-not $c.needs.Count -and -not $c.failed.Count) { return $null }
+    return $c
+}
+function Find-JarClass([string]$mods, [string]$cls) {
+    $entry = ($cls -replace '\.', '/') + '.class'
+    foreach ($jar in @(Get-ChildItem -LiteralPath $mods -Filter '*.jar' -File)) {
+        $z = $null; try { $z = [IO.Compression.ZipFile]::OpenRead($jar.FullName); if ($z.GetEntry($entry)) { return $true } } catch { } finally { if ($z) { $z.Dispose() } }
+    }
+    return $false
+}
+function Repair-ModCrash([string]$stage, $crash, $baseJars, $keepOff, $li) {
+    # Fixes what the last crash report names, in the freshly built game. Only mods this program added for the game
+    # are touched, never one the server runs too: a wrong version is fetched again within range, and a mod that
+    # still cannot load is set aside in _disabled_mods (a game-only extra; joining the server doesn't need it).
+    # Returns the file names set aside, so a later setup leaves them out as well.
+    $mods = Join-Path $stage 'mods'; $off = Join-Path $stage '_disabled_mods'
+    $disable = { param($jar, $why)
+        if (-not (Test-Path -LiteralPath (Join-Path $mods $jar))) { return }
+        New-Item -ItemType Directory -Force $off | Out-Null; Move-Item -LiteralPath (Join-Path $mods $jar) -Destination $off -Force
+        $script:repairOff += $jar; Info "게임을 멈추게 한 모드를 뺐어요: $jar ($why)" }
+    $script:repairOff = @()
+    # Set aside last time and still not needed by the server: stays out
+    foreach ($jar in @($keepOff)) { if ($jar -and -not $baseJars.ContainsKey($jar)) { & $disable $jar '지난번에 문제가 있던 모드' } }
+    if (-not $crash) { return @($script:repairOff) }
+    $info = @{}; $byId = @{}
+    foreach ($jar in @(Get-ChildItem -LiteralPath $mods -Filter '*.jar' -File)) {
+        $z = $null; try { $z = [IO.Compression.ZipFile]::OpenRead($jar.FullName); $r = Get-JarModInfo $z $li.loader; $info[$jar.Name] = $r; foreach ($i in $r.ids) { $byId[$i] = $jar.Name } } catch { } finally { if ($z) { $z.Dispose() } }
+    }
+    $refetch = $false
+    foreach ($n in @($crash.needs)) {
+        $modJar = $byId[$n.mod]; $depJar = $byId[$n.dep]
+        if (-not $modJar) { continue }   # the requiring mod isn't in this build any more
+        $range = $info[$modJar].ranges[$n.dep]
+        if ($depJar -and (Test-VersionRange $info[$depJar].versions[$n.dep] $range)) { continue }   # this build already fits
+        if ($depJar -and -not $baseJars.ContainsKey($depJar)) {
+            Remove-Item -LiteralPath (Join-Path $mods $depJar) -Force; $refetch = $true
+            Info "버전이 안 맞는 모드를 다시 받을게요: $depJar ($($n.mod)에 맞는 버전으로)"; continue
+        }
+        if (-not $depJar -and -not $baseJars.ContainsKey($modJar)) { & $disable $modJar "$($n.dep) 모드를 찾지 못했어요" }
+        elseif (-not $baseJars.ContainsKey($modJar)) { & $disable $modJar "$($n.dep) 버전이 서버와 안 맞아요" }
+    }
+    if ($refetch) { Add-MissingClientDeps $mods $li }
+    foreach ($fl in @($crash.failed)) {
+        $jar = $fl.file
+        if (-not (Test-Path -LiteralPath (Join-Path $mods $jar))) { continue }
+        if ($fl.cls -and (Find-JarClass $mods $fl.cls)) { continue }   # what it was missing is here now
+        if ($baseJars.ContainsKey($jar)) { Info "고치지 못한 모드가 있어요: $jar (서버에도 있는 모드라 뺄 수 없어요. 이 이름을 알려 주세요)"; continue }
+        $ids = @($info[$jar].ids)
+        $needers = @($info.Keys | Where-Object { $_ -ne $jar -and @($info[$_].deps | Where-Object { $_ -in $ids }).Count })
+        if ($needers.Count) { Info "고치지 못한 모드가 있어요: $jar (다른 모드 $($needers.Count)개가 필요로 해요. 이 이름을 알려 주세요)"; continue }
+        & $disable $jar '게임 화면용 모드라 서버 접속에는 필요 없어요'
+    }
+    return @($script:repairOff)
+}
+
 function Test-WeakPc {
     # Integrated graphics (the GPU borrows system RAM and is slow) or 16GB or less: a big modpack needs lighter settings
     $ram = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB
@@ -972,11 +1178,15 @@ function Install-Client($pack) {
     }
     else { $verLabel = $VersionKey; $sigSrc = "$($pack.id)|$VersionKey|$AddedMods" }
     # Bumped whenever the way the game folder is built changes, so existing game folders get rebuilt once
-    $sigSrc = "build6|$sigSrc"
+    $sigSrc = "build7|$sigSrc"
     $sha = [Security.Cryptography.SHA256]::Create()
     $sig = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($sigSrc)) | ForEach-Object { $_.ToString('x2') })
 
-    if ($old -and $old.sig -eq $sig -and $old.versionId -and (Test-Path -LiteralPath (Join-Path $gd 'mods')) -and (Test-Path -LiteralPath (Join-Path $mcDir "versions\$($old.versionId)\$($old.versionId).json"))) {
+    # The game stopped at "Error loading mods" since the last setup: build it again and fix what the report names
+    $crash = Get-ModCrash $gd $old
+    if ($crash) { Info "지난번에 게임이 모드 오류로 멈췄어요. 원인을 고쳐서 다시 준비할게요. ($($crash.file))" }
+    $offList = @(); if ($old -and $old.PSObject.Properties['disabled']) { $offList = @($old.disabled | Where-Object { $_ }) }
+    if (-not $crash -and $old -and $old.sig -eq $sig -and $old.versionId -and (Test-Path -LiteralPath (Join-Path $gd 'mods')) -and (Test-Path -LiteralPath (Join-Path $mcDir "versions\$($old.versionId)\$($old.versionId).json"))) {
         Info '게임 파일은 이미 서버와 똑같아요.'
         $vid = $old.versionId; $li = @{ loader = $old.loader; version = $old.loaderVersion; mc = $old.mc }; $verLabel = $old.version
     }
@@ -994,11 +1204,15 @@ function Install-Client($pack) {
         if ($li.version -notmatch '^[A-Za-z0-9._+-]+$' -or "$($li.mc)" -notmatch '^[0-9][0-9.]*$') { throw "모드팩 안의 버전 정보가 이상해요 (마인크래프트 '$($li.mc)', 로더 '$($li.version)')." }
         Get-AddedClientMods $AddedMods (Join-Path $script:tmp 'mods')
         New-Item -ItemType Directory -Force (Join-Path $script:tmp 'mods') | Out-Null
+        # What the server runs too (or the pack / host put in): a crash repair never takes these out
+        $baseJars = @{}; Get-ChildItem -LiteralPath (Join-Path $script:tmp 'mods') -Filter '*.jar' -File | ForEach-Object { $baseJars[$_.Name] = $true }
         Step '게임에 맞게 모드 정리하는 중'
         Remove-ServerOnlyMods (Join-Path $script:tmp 'mods')
+        if ($pack.source -eq 'curseforge') { Add-CfClientFiles $pack $verLabel $script:tmp $li }
         Add-MissingClientDeps (Join-Path $script:tmp 'mods') $li
         Add-ClientOnlyRequired (Join-Path $script:tmp 'mods') $li
         if ($pack.source -ne 'modrinth') { Add-PerformanceMods (Join-Path $script:tmp 'mods') $li }
+        $offList = @(Repair-ModCrash $script:tmp $crash $baseJars $offList $li)
 
         Step '게임 폴더에 넣는 중'
         # mods is replaced as a whole (old versions must go); configs are laid over; worlds, screenshots and settings stay
@@ -1034,6 +1248,7 @@ function Install-Client($pack) {
         kind = $(if ($host_) { 'host' } else { 'friend' }); name = $Name; pack = $pack.id; packName = $pack.name; version = $verLabel; versionKey = $VersionKey
         versionId = $vid; loader = $li.loader; loaderVersion = $li.version; mc = $li.mc; address = $Address; addedMods = $AddedMods
         profile = $profKey; profileName = $label; serverEntry = $entry; sig = $sig; light = [bool]$light; ramGB = $GameRamGB; installed = (Get-Date -Format 'yyyy-MM-dd HH:mm')
+        installedAt = (Get-Date).ToString('o'); crashFixed = $(if ($crash) { $crash.file } elseif ($old -and $old.PSObject.Properties['crashFixed']) { $old.crashFixed } else { '' }); disabled = @($offList)
     } | ConvertTo-Json | Set-Content -LiteralPath $markerFile -Encoding UTF8
     Write-Host ''
     Write-Host '==================================================' -ForegroundColor Green

@@ -1,7 +1,7 @@
 {
-    "version":  "1.0.16",
+    "version":  "1.0.17",
     "date":  "2026-10-19",
-    "notes":  "게임이 Sodium Options API 오류(embeddium 없음)로 멈추던 문제를 고쳤어요. 게임 켜기를 한 번 더 누르면 빠진 모드를 알아서 넣어요.",
+    "notes":  "CurseForge 모드팩 게임이 모드팩 원래 구성 그대로 준비돼요 (셰이더, 리소스팩 포함). 게임이 모드 오류 화면에서 멈추면 게임 켜기를 한 번 더 누르세요. 프로그램이 오류 보고서를 읽고 알아서 고쳐요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
@@ -9,11 +9,11 @@
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "d7c7aba201d915aae73811cf4bbdbf10c0ed9de27821769f7697d842c58daf12"
+                      "sha256":  "b371ec2e58d0b6fa320d564aefb1431ab71c5a48aeda4199a8b4975d991520e6"
                   },
                   {
                       "path":  "packs.json",
-                      "sha256":  "8a057979364464b5a5618c51f35ee8440ead56e461d9bc1e3117872f21fc90dd"
+                      "sha256":  "2204da0fdbf39cdb71c80e4336839567ba6469e2186c3488e400a35de66c440d"
                   },
                   {
                       "path":  "client-only-mods.txt",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "b382caa94829d4970072648003dba824d2f4f2a5eeadf8bfa3540374b252d4f8"
+                      "sha256":  "5b82a0adde0e0b12e69794d5ca4e1d6492e2fc47c729323a235d0208034c34d0"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "938e60bf0e7173db40ff40b7ced3c1acee304dab0cdeed19c0e598b29ae1a8de"
+                      "sha256":  "a6cf790673d40ee17757491258b07008858379109c2fe2357358b8eaeb7f1c7d"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "bf3a0de5b2f5f6e0638fe3093eb294c478419f6edff8e013bb003840d73a41c7"
+                     "sha256":  "1b96c3b68285ee050456b47b3bf505db165f7e40991bd35f6c7d829e9a4334b1"
                  }
 }

@@ -4,7 +4,7 @@
   "defaultProps": { "allow-flight": "true", "spawn-protection": "64", "max-tick-time": "180000", "difficulty": "normal", "view-distance": "8", "simulation-distance": "6" },
   "packs": [
     {
-      "id": "medieval-mc",
+      "id": "medieval-mc", "cfId": 876851,
       "name": "Medieval MC [FORGE] MMC4",
       "source": "curseforge",
       "page": "https://www.curseforge.com/minecraft/modpacks/medieval-mc-mmc4",
