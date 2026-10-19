@@ -1050,7 +1050,7 @@ function Get-ModCrash([string]$gd, $old) {
     elseif ($old.installed) { $t = [datetime]::MinValue; if ([datetime]::TryParseExact([string]$old.installed, 'yyyy-MM-dd HH:mm', $null, 'None', [ref]$t)) { $since = $t.AddMinutes(1) } }
     $f = Get-ChildItem -LiteralPath (Join-Path $gd 'crash-reports') -Filter 'crash-*-fml.txt' -File -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTime -gt $since -and $_.Name -ne "$($old.crashFixed)" } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $f) { return $null }
+    if (-not $f) { return (Get-ChannelMismatch $gd $old $since) }
     $text = [IO.File]::ReadAllText($f.FullName)
     $c = @{ file = $f.Name; failed = @(); needs = @() }
     # "Mod waterframes requires watermedia 2.1.34 or above, and below 2.2 / Currently, watermedia is 3.0.0.23"
@@ -1066,6 +1066,59 @@ function Get-ModCrash([string]$gd, $old) {
     }
     if (-not $c.needs.Count -and -not $c.failed.Count) { return $null }
     return $c
+}
+function Get-ChannelMismatch([string]$gd, $old, [datetime]$since) {
+    # "Connection closed - mismatched mod channel list": the game has a mod the server lacks (Immersive Paintings,
+    # channel ic_ip, set aside on the host's server). No crash report is written; the game's latest.log says which
+    # channels the server didn't know.
+    $log = Join-Path $gd 'logs\latest.log'
+    if (-not (Test-Path -LiteralPath $log)) { return $null }
+    $li = Get-Item -LiteralPath $log; $key = "latest.log@$($li.LastWriteTime.Ticks)"
+    if ($li.LastWriteTime -le $since -or $key -eq "$($old.crashFixed)") { return $null }
+    try { $text = [IO.File]::ReadAllText($log) } catch { return $null }
+    if ($text -notmatch '(?i)mismatched mod (channel )?list') { return $null }
+    $ns = @()
+    # Forge: "Channels [ic_ip:main,other:net] rejected their server side version number"
+    foreach ($m in [regex]::Matches($text, '(?i)Channels? \[([^\]]+)\] rejected')) { $ns += @($m.Groups[1].Value -split ',' | ForEach-Object { ($_.Trim() -split ':')[0] }) }
+    # Other wordings: namespace:path on lines about missing / rejected / mismatched channels. Only the message part
+    # (after the "[time] [thread/LEVEL] [logger]: " prefix, whose 22:26:10 must not pass for a channel)
+    foreach ($line in ($text -split "`n" | Where-Object { $_ -match '(?i)channel' -and $_ -match '(?i)mismatch|missing|rejected|not present|absent' })) {
+        $msg = $line; $cut = $line.LastIndexOf(']: '); if ($cut -ge 0) { $msg = $line.Substring($cut + 3) }
+        foreach ($m in [regex]::Matches($msg, '(?<![A-Za-z0-9_./-])([a-z][a-z0-9_]{1,63}):[a-z0-9_/.-]*[a-z][a-z0-9_/.-]*')) { $ns += $m.Groups[1].Value }
+    }
+    # Mod ids follow ^[a-z][a-z0-9_]{1,63}$
+    $ns = @($ns | ForEach-Object { "$_".Trim() } | Where-Object { $_ -cmatch '^[a-z][a-z0-9_]{1,63}$' -and $_ -notin 'minecraft', 'forge', 'fml', 'neoforge', 'http', 'https', 'union', 'jar', 'file' } | Select-Object -Unique)
+    if (-not $ns.Count) { Info '서버와 모드가 달라서 접속이 막혔던 기록은 있는데, 어떤 모드인지 기록에서 찾지 못했어요.'; return $null }
+    return @{ file = $key; failed = @(); needs = @(); channels = $ns }
+}
+function Find-JarWithText([string]$mods, [string]$text, $jars) {
+    # Which jar (or jar inside a jar) has this channel namespace in its code
+    if (-not ('McsmBytes' -as [type])) {
+        Add-Type -ReferencedAssemblies System.IO.Compression -TypeDefinition @'
+using System.IO; using System.IO.Compression;
+public static class McsmBytes {
+    static bool Has(byte[] b, byte[] p) { for (int i = 0; i <= b.Length - p.Length; i++) { int k = 0; while (k < p.Length && b[i + k] == p[k]) k++; if (k == p.Length) return true; } return false; }
+    public static bool ZipHas(ZipArchive z, byte[] p, int depth) {
+        foreach (ZipArchiveEntry e in z.Entries) {
+            string n = e.FullName;
+            bool code = n.EndsWith(".class") || n.EndsWith(".json") || n.EndsWith(".toml");
+            bool inner = depth < 3 && n.StartsWith("META-INF/") && n.EndsWith(".jar");
+            if (!code && !inner) continue;
+            MemoryStream ms = new MemoryStream(); using (Stream s = e.Open()) s.CopyTo(ms);
+            if (code) { if (Has(ms.ToArray(), p)) return true; }
+            else { ms.Position = 0; try { using (ZipArchive x = new ZipArchive(ms)) if (ZipHas(x, p, depth + 1)) return true; } catch { } }
+        }
+        return false;
+    }
+}
+'@
+    }
+    $pat = [Text.Encoding]::ASCII.GetBytes($text)
+    foreach ($j in @($jars)) {
+        $z = $null
+        try { $z = [IO.Compression.ZipFile]::OpenRead((Join-Path $mods $j)); if ([McsmBytes]::ZipHas($z, $pat, 0)) { return $j } } catch { } finally { if ($z) { $z.Dispose() } }
+    }
+    return $null
 }
 function Find-JarClass([string]$mods, [string]$cls) {
     $entry = ($cls -replace '\.', '/') + '.class'
@@ -1083,7 +1136,7 @@ function Repair-ModCrash([string]$stage, $crash, $baseJars, $keepOff, $li) {
     $disable = { param($jar, $why)
         if (-not (Test-Path -LiteralPath (Join-Path $mods $jar))) { return }
         New-Item -ItemType Directory -Force $off | Out-Null; Move-Item -LiteralPath (Join-Path $mods $jar) -Destination $off -Force
-        $script:repairOff += $jar; Info "게임을 멈추게 한 모드를 뺐어요: $jar ($why)" }
+        $script:repairOff += $jar; Info "게임에서 모드를 뺐어요: $jar ($why)" }
     $script:repairOff = @()
     # Set aside last time and still not needed by the server: stays out
     foreach ($jar in @($keepOff)) { if ($jar -and -not $baseJars.ContainsKey($jar)) { & $disable $jar '지난번에 문제가 있던 모드' } }
@@ -1106,6 +1159,16 @@ function Repair-ModCrash([string]$stage, $crash, $baseJars, $keepOff, $li) {
         elseif (-not $baseJars.ContainsKey($modJar)) { & $disable $modJar "$($n.dep) 버전이 서버와 안 맞아요" }
     }
     if ($refetch) { Add-MissingClientDeps $mods $li }
+    foreach ($ns in @($crash.channels)) {
+        # A mod the game has and the server doesn't: out of the game, with whatever only it needed
+        $jar = $byId[$ns]
+        if (-not $jar -and $ns.Length -ge 4) { $jar = Find-JarWithText $mods $ns @($info.Keys | Where-Object { -not $baseJars.ContainsKey($_) }) }   # short names would match too much
+        if (-not $jar) { Info "서버와 맞지 않는 모드($ns)를 찾지 못했어요. (이 이름을 알려 주세요)"; continue }
+        if ($baseJars.ContainsKey($jar)) { Info "서버에도 있는 모드인데 맞지 않아요: $jar (방장 서버와 버전이 다를 수 있어요. 이 이름을 알려 주세요)"; continue }
+        & $disable $jar "서버에는 없는 모드라 접속이 막혔어요 ($ns)"
+        $ids = @($info[$jar].ids)
+        foreach ($other in @($info.Keys | Where-Object { $_ -ne $jar -and -not $baseJars.ContainsKey($_) -and @($info[$_].deps | Where-Object { $_ -in $ids }).Count })) { & $disable $other "$jar 이(가) 빠져서 같이 뺐어요" }
+    }
     foreach ($fl in @($crash.failed)) {
         $jar = $fl.file
         if (-not (Test-Path -LiteralPath (Join-Path $mods $jar))) { continue }
@@ -1212,7 +1275,8 @@ function Install-Client($pack) {
 
     # The game stopped at "Error loading mods" since the last setup: build it again and fix what the report names
     $crash = Get-ModCrash $gd $old
-    if ($crash) { Info "지난번에 게임이 모드 오류로 멈췄어요. 원인을 고쳐서 다시 준비할게요. ($($crash.file))" }
+    if ($crash -and $crash.channels) { Info "지난번에 서버와 모드가 달라서 접속이 막혔어요. 맞춰서 다시 준비할게요." }
+    elseif ($crash) { Info "지난번에 게임이 모드 오류로 멈췄어요. 원인을 고쳐서 다시 준비할게요. ($($crash.file))" }
     $offList = @(); if ($old -and $old.PSObject.Properties['disabled']) { $offList = @($old.disabled | Where-Object { $_ }) }
     if (-not $crash -and $old -and $old.sig -eq $sig -and $old.versionId -and (Test-Path -LiteralPath (Join-Path $gd 'mods')) -and (Test-Path -LiteralPath (Join-Path $mcDir "versions\$($old.versionId)\$($old.versionId).json"))) {
         Info '게임 파일은 이미 서버와 똑같아요.'
@@ -1236,7 +1300,9 @@ function Install-Client($pack) {
         else { Get-AddedClientMods $AddedPacks (Join-Path $script:tmp 'resourcepacks') 'zip' }
         New-Item -ItemType Directory -Force (Join-Path $script:tmp 'mods') | Out-Null
         # What the server runs too (or the pack / host put in): a crash repair never takes these out
-        $baseJars = @{}; Get-ChildItem -LiteralPath (Join-Path $script:tmp 'mods') -Filter '*.jar' -File | ForEach-Object { $baseJars[$_.Name] = $true }
+        # (the host's game: only the server's own mods folder; jars from _client_only_mods are not on the server)
+        $baseJars = @{}; $baseDir = Join-Path $script:tmp 'mods'; if ($host_) { $baseDir = Join-Path $FromServer 'mods' }
+        Get-ChildItem -LiteralPath $baseDir -Filter '*.jar' -File -ErrorAction SilentlyContinue | ForEach-Object { $baseJars[$_.Name] = $true }
         Step '게임에 맞게 모드 정리하는 중'
         Remove-ServerOnlyMods (Join-Path $script:tmp 'mods')
         if ($pack.source -eq 'curseforge') { Add-CfClientFiles $pack $verLabel $script:tmp $li }

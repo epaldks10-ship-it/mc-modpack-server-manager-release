@@ -1,7 +1,7 @@
 {
-    "version":  "1.0.20",
+    "version":  "1.0.21",
     "date":  "2026-10-19",
-    "notes":  "보이스 채팅용 UDP 터널을 프로그램이 Playit에 알아서 만들어요. 친구랑 하기로 서버를 켜면 터널을 만들고 연결해요. 안 되면 콘솔에 이유와 방법이 나와요.",
+    "notes":  "서버 접속이 mismatched mod channel list(서버에 없는 모드)로 막히면, 게임을 닫고 게임 켜기를 다시 누르세요. 프로그램이 기록을 읽고 서버에 없는 모드를 게임에서 알아서 빼요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
@@ -9,7 +9,7 @@
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "1fe2249704c541db27befe9cdd89bf9e03c6a28b032df0980817444c78884261"
+                      "sha256":  "bf4053d753af5b7b0724d053c075dd44263f6b20d975e93cd56c9716aa04c4fa"
                   },
                   {
                       "path":  "packs.json",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "eebd01ac71449a737a2b12e7da799670cbe66060b40fd91d2d6fd01aee31738c"
+                      "sha256":  "ea5e9a70d82f488693c4955db79e9cb2c46c025ba9f1503cba14dc0667daa6b6"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "034d4a51a95210cd8176c652120baff4b3fe8ce23416dcd6a14cd12c75aba0dd"
+                      "sha256":  "8ca5a8fc5cb3e5e9dca0cf3f69a799a15a52a63ce33cacedd7ea4e31ed1198c4"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "4e247c1134aee5d64be6e1ead28ac15fe617a9a68d0ce9584a3c1b326d2013a2"
+                     "sha256":  "9822b678c7f3d2f65c458f0c5da47d1b290c47c4dc1494a0618dbabb9081ef2d"
                  }
 }
