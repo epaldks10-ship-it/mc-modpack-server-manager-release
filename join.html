@@ -220,7 +220,8 @@
     var pack = await packName(c), cf = pack.source === "curseforge", mr = pack.source === "modrinth";
     $("fServer").textContent = c.n || "-";
     $("fPack").textContent = pack.name;
-    $("fMods").textContent = (mods.length || links.length) ? ("[자동] " + mods.length + "개" + (links.length ? " + [링크] " + links.length + "개" : "")) : "없음";
+    var rps = (Array.isArray(c.r) ? c.r : []).filter(function (x) { return x && /^[A-Za-z0-9]{4,16}$/.test(x.p); });
+    $("fMods").textContent = ((mods.length || links.length) ? ("[자동] " + mods.length + "개" + (links.length ? " + [링크] " + links.length + "개" : "")) : "없음") + (rps.length ? " (리소스팩 " + rps.length + "개도 자동으로 받아요)" : "");
     show("info");
     $("sub").textContent = "'" + (c.n || "친구") + "' 서버예요. " + (manual ? "앱으로 직접 설치하는 방법이에요. " : "") + "아래 순서대로 하면 돼요.";
 

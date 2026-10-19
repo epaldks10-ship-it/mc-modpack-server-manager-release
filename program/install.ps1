@@ -14,6 +14,7 @@
     [string]$FromServer = '',  # host on the same PC: take the files from this server folder instead of downloading
     [string]$Address = '127.0.0.1',
     [string]$AddedMods = '',   # friend: base64 JSON [{p: modrinthProjectId, f: fileName}, ...] the host added by hand
+    [string]$AddedPacks = '',  # friend: the same for resource packs the host added (Modrinth ones only)
     [int]$GameRamGB = 6
 )
 # Installs one modpack server into <root>\servers\<Name>.
@@ -586,22 +587,23 @@ function Copy-FriendMods([string]$srv, [string]$mods) {
     }
 }
 
-function Get-AddedClientMods([string]$b64, [string]$mods) {
-    # Mods the host added by hand, named by Modrinth project and file so the friend gets the very same file
+function Get-AddedClientMods([string]$b64, [string]$mods, [string]$ext = 'jar') {
+    # Mods (or resource packs, $ext zip) the host added by hand, named by Modrinth project and file so the friend gets the very same file
     if (-not $b64) { return }
     $parsed = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)) | ConvertFrom-Json
     New-Item -ItemType Directory -Force $mods | Out-Null
     foreach ($m in @($parsed)) {
         $projId = [string]$m.p; $file = [string]$m.f
-        if ($projId -notmatch '^[A-Za-z0-9]{4,16}$' -or $file -notmatch '^[A-Za-z0-9 ._+()\[\]-]+\.jar$') { Info "이상한 추가 모드 정보는 건너뛰었어요: $file"; continue }
+        if ($projId -notmatch '^[A-Za-z0-9]{4,16}$' -or $file -notmatch "^[A-Za-z0-9 ._+()\[\]-]+\.$ext`$") { Info "이상한 추가 파일 정보는 건너뛰었어요: $file"; continue }
         $hit = $null
         foreach ($v in @(Invoke-RestMethod "https://api.modrinth.com/v2/project/$projId/version" | ForEach-Object { $_ })) {
             $hit = $v.files | Where-Object { $_.filename -eq $file } | Select-Object -First 1
             if ($hit) { break }
         }
-        if (-not $hit) { Info "방장이 추가한 모드를 찾지 못했어요: $file (방장에게 그 파일을 받아서 mods 폴더에 넣어 주세요)"; continue }
+        $what = '모드'; $folder = 'mods'; if ($ext -eq 'zip') { $what = '리소스팩'; $folder = 'resourcepacks' }
+        if (-not $hit) { Info "방장이 추가한 $($what)을(를) 찾지 못했어요: $file (방장에게 그 파일을 받아서 $folder 폴더에 넣어 주세요)"; continue }
         Get-Download $hit.url (Join-Path $mods $file) -Sha1 $hit.hashes.sha1
-        Info "방장이 추가한 모드: $file"
+        Info "방장이 추가한 $($what): $file"
     }
 }
 
@@ -1117,6 +1119,31 @@ function Repair-ModCrash([string]$stage, $crash, $baseJars, $keepOff, $li) {
     return @($script:repairOff)
 }
 
+function Enable-ResourcePacks([string]$gd, $added, $done) {
+    # Turns resource packs on in options.txt: the ones the host added, and the ones the modpack's own Resource Pack
+    # Overrides config lists as default_packs (that config only acts on a game's very first start, and this program
+    # writes options.txt before that). Each pack is switched on once; one the player turns off later stays off.
+    # Returns every pack name handled so far.
+    $names = @($added | Where-Object { $_ })
+    $rpo = Join-Path $gd 'config\resourcepackoverrides.json'
+    if (Test-Path -LiteralPath $rpo) { try { $names += @((Get-Content -LiteralPath $rpo -Raw -Encoding UTF8 | ConvertFrom-Json).default_packs | Where-Object { "$_" -like 'file/*' } | ForEach-Object { "$_".Substring(5) }) } catch { } }
+    $done = @($done | Where-Object { $_ })
+    $new = @($names | Where-Object { $_ -notin $done -and $_ -notmatch '[\/"]' -and (Test-Path -LiteralPath (Join-Path $gd "resourcepacks\$_")) } | Select-Object -Unique)
+    if (-not $new.Count) { return @($done) }
+    $opt = Join-Path $gd 'options.txt'
+    $lines = @(); if (Test-Path -LiteralPath $opt) { $lines = @([IO.File]::ReadAllLines($opt)) }
+    $read = { param($key) $l = $lines | Where-Object { $_ -like "$($key):*" } | Select-Object -First 1; $v = @(); if ($l) { try { $v = @($l.Substring($key.Length + 1) | ConvertFrom-Json) } catch { } }; return , @($v | Where-Object { $_ }) }
+    $on = & $read 'resourcePacks'; if (-not $on.Count) { $on = @('vanilla') }
+    $ok = & $read 'incompatibleResourcePacks'
+    foreach ($n in $new) { if ("file/$n" -notin $on) { $on += "file/$n" }; if ("file/$n" -notin $ok) { $ok += "file/$n" } }   # later in the list = higher priority
+    $set = @{ resourcePacks = (ConvertTo-Json -InputObject @($on) -Compress); incompatibleResourcePacks = (ConvertTo-Json -InputObject @($ok) -Compress) }
+    $out = @(foreach ($l in $lines) { $k = ($l -split ':', 2)[0]; if ($set.ContainsKey($k)) { "$($k):$($set[$k])"; $set.Remove($k) } else { $l } })
+    foreach ($k in @($set.Keys)) { $out += "$($k):$($set[$k])" }
+    [IO.File]::WriteAllLines($opt, [string[]]$out, (New-Object Text.UTF8Encoding($false)))
+    Info "리소스팩 $($new.Count)개를 켜 뒀어요: $(@($new | Select-Object -First 5) -join ', ')"
+    return @($done) + @($new)
+}
+
 function Test-WeakPc {
     # Integrated graphics (the GPU borrows system RAM and is slow) or 16GB or less: a big modpack needs lighter settings
     $ram = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB
@@ -1174,9 +1201,10 @@ function Install-Client($pack) {
         $info = Get-Content -LiteralPath (Join-Path $FromServer 'server-info.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         $verLabel = $info.version
         $jars = foreach ($d in 'mods', '_client_only_mods', '친구용_추가모드') { Get-ChildItem -LiteralPath (Join-Path $FromServer $d) -Filter '*.jar' -File -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Name):$($_.Length)" } }
+        $jars = @($jars) + @(Get-ChildItem -LiteralPath (Join-Path $FromServer '_resourcepacks') -Filter '*.zip' -File -ErrorAction SilentlyContinue | ForEach-Object { "rp/$($_.Name):$($_.Length)" })
         $sigSrc = "$($pack.id)|$verLabel|" + ((@($jars) | Sort-Object) -join ',')
     }
-    else { $verLabel = $VersionKey; $sigSrc = "$($pack.id)|$VersionKey|$AddedMods" }
+    else { $verLabel = $VersionKey; $sigSrc = "$($pack.id)|$VersionKey|$AddedMods|$AddedPacks" }
     # Bumped whenever the way the game folder is built changes, so existing game folders get rebuilt once
     $sigSrc = "build7|$sigSrc"
     $sha = [Security.Cryptography.SHA256]::Create()
@@ -1203,6 +1231,9 @@ function Install-Client($pack) {
         else { $ver = Get-ModrinthVersion $pack $VersionKey; $verLabel = $ver.version_number; $li = Get-ModrinthClient $ver $script:tmp }
         if ($li.version -notmatch '^[A-Za-z0-9._+-]+$' -or "$($li.mc)" -notmatch '^[0-9][0-9.]*$') { throw "모드팩 안의 버전 정보가 이상해요 (마인크래프트 '$($li.mc)', 로더 '$($li.version)')." }
         Get-AddedClientMods $AddedMods (Join-Path $script:tmp 'mods')
+        # Resource packs the host added: the host's own copies, or for a friend the same Modrinth files
+        if ($host_) { Get-ChildItem -LiteralPath (Join-Path $FromServer '_resourcepacks') -Filter '*.zip' -File -ErrorAction SilentlyContinue | ForEach-Object { New-Item -ItemType Directory -Force (Join-Path $script:tmp 'resourcepacks') | Out-Null; Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $script:tmp 'resourcepacks') -Force } }
+        else { Get-AddedClientMods $AddedPacks (Join-Path $script:tmp 'resourcepacks') 'zip' }
         New-Item -ItemType Directory -Force (Join-Path $script:tmp 'mods') | Out-Null
         # What the server runs too (or the pack / host put in): a crash repair never takes these out
         $baseJars = @{}; Get-ChildItem -LiteralPath (Join-Path $script:tmp 'mods') -Filter '*.jar' -File | ForEach-Object { $baseJars[$_.Name] = $true }
@@ -1238,6 +1269,12 @@ function Install-Client($pack) {
     # A fresh game folder starts in Korean; afterwards the player's own settings are left alone
     $opt = Join-Path $gd 'options.txt'
     if (-not (Test-Path -LiteralPath $opt)) { [IO.File]::WriteAllText($opt, "lang:ko_kr`r`n", (New-Object Text.UTF8Encoding($false))) }
+    # Packs the host added and the ones the modpack itself turns on: switched on once, so the player can still turn them off
+    $packsOn = @(); if ($old -and $old.PSObject.Properties['packsOn']) { $packsOn = @($old.packsOn | Where-Object { $_ }) }
+    $want = @()
+    if ($host_) { $want += @(Get-ChildItem -LiteralPath (Join-Path $FromServer '_resourcepacks') -Filter '*.zip' -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) }
+    elseif ($AddedPacks) { try { $want += @([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($AddedPacks)) | ConvertFrom-Json | ForEach-Object { [string]$_.f }) } catch { } }
+    $packsOn = @(Enable-ResourcePacks $gd $want $packsOn)
     # Weaker PCs get lighter graphics once (a backup is kept); later changes in the game's own settings are left alone
     $light = $old -and $old.PSObject.Properties['light'] -and $old.light
     if (-not $light -and (Test-WeakPc)) {
@@ -1246,9 +1283,9 @@ function Install-Client($pack) {
     }
     [ordered]@{
         kind = $(if ($host_) { 'host' } else { 'friend' }); name = $Name; pack = $pack.id; packName = $pack.name; version = $verLabel; versionKey = $VersionKey
-        versionId = $vid; loader = $li.loader; loaderVersion = $li.version; mc = $li.mc; address = $Address; addedMods = $AddedMods
+        versionId = $vid; loader = $li.loader; loaderVersion = $li.version; mc = $li.mc; address = $Address; addedMods = $AddedMods; addedPacks = $AddedPacks
         profile = $profKey; profileName = $label; serverEntry = $entry; sig = $sig; light = [bool]$light; ramGB = $GameRamGB; installed = (Get-Date -Format 'yyyy-MM-dd HH:mm')
-        installedAt = (Get-Date).ToString('o'); crashFixed = $(if ($crash) { $crash.file } elseif ($old -and $old.PSObject.Properties['crashFixed']) { $old.crashFixed } else { '' }); disabled = @($offList)
+        installedAt = (Get-Date).ToString('o'); crashFixed = $(if ($crash) { $crash.file } elseif ($old -and $old.PSObject.Properties['crashFixed']) { $old.crashFixed } else { '' }); disabled = @($offList); packsOn = @($packsOn)
     } | ConvertTo-Json | Set-Content -LiteralPath $markerFile -Encoding UTF8
     Write-Host ''
     Write-Host '==================================================' -ForegroundColor Green

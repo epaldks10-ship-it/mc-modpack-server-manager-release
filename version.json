@@ -1,15 +1,15 @@
 {
-    "version":  "1.0.17",
+    "version":  "1.0.18",
     "date":  "2026-10-19",
-    "notes":  "CurseForge 모드팩 게임이 모드팩 원래 구성 그대로 준비돼요 (셰이더, 리소스팩 포함). 게임이 모드 오류 화면에서 멈추면 게임 켜기를 한 번 더 누르세요. 프로그램이 오류 보고서를 읽고 알아서 고쳐요.",
+    "notes":  "리소스팩을 넣을 수 있어요 (모드 추가 옆 리소스팩 버튼, 게임에서 자동으로 켜짐, 친구도 초대 링크로 받음). 만들어 둔 서버를 지우거나 목록 순서를 바꿀 수 있어요. 친구 서버 탭에서 원본 링크로 받은 모드 파일을 버튼으로 넣을 수 있어요. 모드팩이 기본으로 켜 두는 리소스팩도 자동으로 켜져요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "2e246d07877919404bb5170f4c0ca635e615a447a9cd84475a74a053d02c7b91"
+                      "sha256":  "ef52de7386a8fd2ee36179323ee29586d63d311ceed0be5c110206d241862ba7"
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "b371ec2e58d0b6fa320d564aefb1431ab71c5a48aeda4199a8b4975d991520e6"
+                      "sha256":  "1fe2249704c541db27befe9cdd89bf9e03c6a28b032df0980817444c78884261"
                   },
                   {
                       "path":  "packs.json",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "5b82a0adde0e0b12e69794d5ca4e1d6492e2fc47c729323a235d0208034c34d0"
+                      "sha256":  "98545e8d0188cb36e8fa2dbed76e2d11dcbe3928a98266421c38aeced9e34cd9"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "a6cf790673d40ee17757491258b07008858379109c2fe2357358b8eaeb7f1c7d"
+                      "sha256":  "576fb8940cf99149e36186907f042485ffd7fe4c21f8796d28e90d5117d287b5"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "1b96c3b68285ee050456b47b3bf505db165f7e40991bd35f6c7d829e9a4334b1"
+                     "sha256":  "68636ef88effe8ca647361ae1726dfd767f4a68a8abf5cb697730bebe720a8b5"
                  }
 }

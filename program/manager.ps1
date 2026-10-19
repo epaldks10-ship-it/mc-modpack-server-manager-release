@@ -660,11 +660,15 @@ function Start-PackUpdate {
 # =====================================================================================
 # Tab: my servers (server console lives here)
 # =====================================================================================
-$lblMy = New-Ctl Label 10 10 230 22 '만들어 둔 서버'
+$lblMy = New-Ctl Label 10 10 114 22 '만들어 둔 서버'
+$btnSrvUp = New-Ctl Button 126 7 34 26 '▲'
+$btnSrvDown = New-Ctl Button 161 7 34 26 '▼'
+$btnSrvDel = New-Ctl Button 197 7 48 26 '삭제'
 $lstSrv = New-Ctl ListBox 10 35 235 112
 $btnPlay = New-Ctl Button 10 148 235 42 '▶ 마인크래프트 켜기'; $btnPlay.Font = $bold; $btnPlay.BackColor = [Drawing.Color]::FromArgb(214, 240, 214)
 $btnSettings = New-Ctl Button 10 194 235 34 '서버 설정 (난이도, 인원 등)'
-$btnMods = New-Ctl Button 10 232 235 34 '모드 추가 / 관리'
+$btnMods = New-Ctl Button 10 232 147 34 '모드 추가 / 관리'
+$btnPacks = New-Ctl Button 161 232 84 34 '리소스팩'
 $btnBackup = New-Ctl Button 10 270 235 34 '백업 / 월드 관리'
 $btnInvite = New-Ctl Button 10 308 235 34 '친구 초대 링크 복사'; $btnInvite.BackColor = [Drawing.Color]::FromArgb(222, 234, 250)
 $btnFriend = New-Ctl Button 10 346 235 34 '친구 접속 안내'
@@ -699,19 +703,85 @@ $txtCmd = New-Ctl TextBox 260 580 590 28
 $btnSend = New-Ctl Button 856 578 99 32 '명령 보내기'
 $tip.SetToolTip($btnPlay, '서버와 똑같은 모드팩 게임을 준비하고 마인크래프트 런처를 열어요. 멀티플레이에 내 서버가 들어 있어요.')
 $tip.SetToolTip($btnInvite, '링크 하나만 카톡이나 디스코드에 붙여 넣으면, 친구는 모드팩과 내가 추가한 모드까지 자동으로 받아요.')
-$tabMy.Controls.AddRange(@($lblMy, $lstSrv, $btnPlay, $btnSettings, $btnFolder, $btnMods, $btnInvite, $btnFriend, $btnBackup, $btnPlayit, $btnSecurity, $btnUpdate, $lblPlayit, $btnCopyAddr,
+$tip.SetToolTip($btnPacks, '리소스팩을 넣어요. 내 게임에 들어가서 자동으로 켜지고, Modrinth 리소스팩은 친구도 초대 링크로 받아요.')
+$tip.SetToolTip($btnSrvUp, '고른 서버를 목록에서 위로 옮겨요.')
+$tip.SetToolTip($btnSrvDown, '고른 서버를 목록에서 아래로 옮겨요.')
+$tip.SetToolTip($btnSrvDel, '고른 서버를 지워요. (휴지통으로 옮겨서 되살릴 수 있어요)')
+$tabMy.Controls.AddRange(@($lblMy, $btnSrvUp, $btnSrvDown, $btnSrvDel, $lstSrv, $btnPlay, $btnSettings, $btnFolder, $btnMods, $btnPacks, $btnInvite, $btnFriend, $btnBackup, $btnPlayit, $btnSecurity, $btnUpdate, $lblPlayit, $btnCopyAddr,
         $lblState, $prg, $lblStage, $lblSrvInfo, $lblRamSrv, $numRamSrv, $btnRamSrv, $btnStart, $btnLocal, $btnStop, $btnAddFriend, $lblPlayers, $txtConsole, $txtCmd, $btnSend))
 
+$ServerOrderFile = Join-Path $Prog 'server-order.json'   # the order the user put the list in (not replaced by updates)
 function Update-Servers {
     $keep = $lstSrv.SelectedItem
     $lstSrv.Items.Clear()
-    Get-ChildItem -LiteralPath $ServersDir -Directory |
-        Where-Object { (Test-Path -LiteralPath (Join-Path $_.FullName '서버켜기.bat')) -and -not (Test-Path -LiteralPath (Join-Path $_.FullName '.installing')) } |
-        ForEach-Object { [void]$lstSrv.Items.Add($_.Name) }
+    $names = @(Get-ChildItem -LiteralPath $ServersDir -Directory |
+            Where-Object { (Test-Path -LiteralPath (Join-Path $_.FullName '서버켜기.bat')) -and -not (Test-Path -LiteralPath (Join-Path $_.FullName '.installing')) } |
+            ForEach-Object { $_.Name })
+    # Servers in the saved order first, new ones after them by name
+    $order = @(Read-JsonList $ServerOrderFile | ForEach-Object { [string]$_ })
+    foreach ($n in @($order | Where-Object { $_ -in $names }) + @($names | Where-Object { $_ -notin $order })) { [void]$lstSrv.Items.Add($n) }
     if ($keep -and $lstSrv.Items.Contains($keep)) { $lstSrv.SelectedItem = $keep }
     elseif ($lstSrv.Items.Count) { $lstSrv.SelectedIndex = 0 }
     else { $lblSrvInfo.Text = "아직 서버가 없어요. [새 서버 만들기] 탭에서 만들어 보세요." }
 }
+function Save-ServerOrder {
+    $names = @(foreach ($it in $lstSrv.Items) { [string]$it })
+    [IO.File]::WriteAllText($ServerOrderFile, (ConvertTo-Json -InputObject $names), $Utf8)
+}
+function Move-SelectedServer([int]$step) {
+    $i = $lstSrv.SelectedIndex; $j = $i + $step
+    if ($i -lt 0 -or $j -lt 0 -or $j -ge $lstSrv.Items.Count) { return }
+    if (-not $lstSrv.Enabled) { Show-Msg '서버가 켜져 있는 동안에는 순서를 바꿀 수 없어요. 서버를 끈 다음 해 주세요.'; return }
+    $name = $lstSrv.Items[$i]
+    $lstSrv.Items.RemoveAt($i); $lstSrv.Items.Insert($j, $name); $lstSrv.SelectedIndex = $j
+    Save-ServerOrder
+}
+$btnSrvUp.Add_Click({ Move-SelectedServer -1 })
+$btnSrvDown.Add_Click({ Move-SelectedServer 1 })
+function Remove-SelectedServer {
+    $d = Get-SelDir; if (-not $d) { Show-Msg '지울 서버를 목록에서 고르세요.'; return }
+    $name = $lstSrv.SelectedItem
+    if ($script:installProc) { Show-Msg '설치나 업데이트가 진행 중이에요. 끝난 다음에 해 주세요.'; return }
+    if (-not (Assert-ServerOff $d)) { return }
+    $gd = Join-Path $GameRoot $name
+    $hasGame = Test-Path -LiteralPath $gd
+    if ($hasGame -and (Test-GameRunning $gd)) { Show-Msg '이 서버용 마인크래프트가 켜져 있어요. 게임을 끈 다음 다시 해 주세요.'; return }
+    $q = "'$name' 서버를 지울까요?`n`n- 서버 폴더(월드, 백업, 설정)를 통째로 휴지통으로 옮겨요. 휴지통에서 되살릴 수 있어요."
+    if ($hasGame) { $q += "`n- 이 서버용 마인크래프트 게임 폴더와 런처의 설치 항목도 같이 지워요." }
+    $q += "`n- PC 밖 백업 폴더에 복사해 둔 백업은 그대로 남아요."
+    if (-not (Ask-YesNo $q)) { return }
+    if (-not (Ask-YesNo "정말 '$name' 서버를 지울까요?`n친구들도 이 서버에 더 이상 들어올 수 없어요.")) { return }
+    # The launcher's entry for this server's game goes first (the launcher has to be closed to change its list)
+    $gm = $null; if ($hasGame) { $gm = Read-Json (Join-Path $gd 'mcsm-game.json') }
+    if ($gm -and $gm.profile) {
+        $pf = Join-Path (Get-McDirPath) 'launcher_profiles.json'
+        try {
+            $j = Get-Content -LiteralPath $pf -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($j.profiles.PSObject.Properties[$gm.profile]) {
+                if (-not (Close-McLauncher)) { return }
+                $j = Get-Content -LiteralPath $pf -Raw -Encoding UTF8 | ConvertFrom-Json
+                $j.profiles.PSObject.Properties.Remove($gm.profile); [IO.File]::WriteAllText($pf, ($j | ConvertTo-Json -Depth 20), $Utf8)
+            }
+        }
+        catch { }
+    }
+    Add-Type -AssemblyName Microsoft.VisualBasic
+    $form.Cursor = 'WaitCursor'
+    try {
+        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($d, 'OnlyErrorDialogs', 'SendToRecycleBin')
+        if ($hasGame) { try { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($gd, 'OnlyErrorDialogs', 'SendToRecycleBin') } catch { } }
+    }
+    catch {
+        $form.Cursor = 'Default'
+        Show-Msg "지우지 못했어요. 서버 폴더의 파일을 다른 프로그램이 쓰고 있을 수 있어요.`n잠시 뒤에 다시 해 보거나, PC를 다시 켠 다음 해 주세요.`n($($_.Exception.Message))" 'Warning'
+        Update-Servers; return
+    }
+    $form.Cursor = 'Default'
+    Update-Servers; Save-ServerOrder
+    if (-not $lstSrv.Items.Count) { $lblSrvInfo.Text = "아직 서버가 없어요. [새 서버 만들기] 탭에서 만들어 보세요." }
+    Show-Msg "'$name' 서버를 휴지통으로 옮겼어요. 잘못 지웠으면 휴지통에서 [복원]하고 이 프로그램을 다시 켜면 돼요."
+}
+$btnSrvDel.Add_Click({ Remove-SelectedServer })
 function Get-SelDir { if ($lstSrv.SelectedIndex -lt 0) { return $null }; return Join-Path $ServersDir $lstSrv.SelectedItem }
 function Test-Eula($d) { $e = Join-Path $d 'eula.txt'; return (Test-Path -LiteralPath $e) -and ((Get-Content -LiteralPath $e -Raw) -match 'eula\s*=\s*true') }
 
@@ -1751,6 +1821,111 @@ function Show-ModManager {
     [void]$f.ShowDialog($form)
 }
 $btnMods.Add_Click({ Show-ModManager })
+
+# ---------------- resource packs the host adds (game only: the server never loads them) ----------------
+function Get-AddedPacks($d) { return @(Read-JsonList (Join-Path $d 'added-packs.json')) }
+function Save-AddedPacks($d, $list) { [IO.File]::WriteAllText((Join-Path $d 'added-packs.json'), (ConvertTo-Json -InputObject @($list) -Depth 4), $Utf8) }
+function Test-PackFileName([string]$n) { return $n -match '^[A-Za-z0-9 ._+()\[\]-]+\.zip$' }
+function Show-PackManager {
+    $d = Get-SelDir; if (-not $d) { return }
+    $i = Read-Json (Join-Path $d 'server-info.json')
+    if (-not $i -or -not $i.mc) { Show-Msg '이 서버의 마인크래프트 버전 정보를 찾지 못했어요 (server-info.json).' 'Error'; return }
+    $mc = $i.mc; $rp = Join-Path $d '_resourcepacks'
+
+    $f = New-Object Windows.Forms.Form
+    $f.Text = "리소스팩 추가 / 관리 - $($lstSrv.SelectedItem)  (마인크래프트 $mc)"; $f.Size = New-Object Drawing.Size(900, 640); $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.Font = $font
+    $l1 = New-Ctl Label 15 10 860 22 "Modrinth 에서 마인크래프트 $mc 용 리소스팩을 검색해요. 넣은 리소스팩은 게임에 들어가고 자동으로 켜져요."
+    $tq = New-Ctl TextBox 15 38 600 28
+    $bq = New-Ctl Button 625 36 120 32 '검색'
+    $lv = New-Object Windows.Forms.ListView; $lv.Location = New-Object Drawing.Point(15, 75); $lv.Size = New-Object Drawing.Size(860, 230); $lv.View = 'Details'; $lv.FullRowSelect = $true; $lv.Font = $font
+    [void]$lv.Columns.Add('리소스팩', 250); [void]$lv.Columns.Add('설명', 500); [void]$lv.Columns.Add('다운로드', 90)
+    $ba = New-Ctl Button 15 312 260 36 '선택한 리소스팩 추가'
+    $bf = New-Ctl Button 285 312 260 36 '내 컴퓨터의 .zip 파일 추가'
+    $bi = New-Ctl Button 705 312 170 36 '초대 링크 복사'; $bi.BackColor = [Drawing.Color]::FromArgb(222, 234, 250)
+    $l2 = New-Ctl Label 15 360 860 22 "넣은 리소스팩   ([자동] 친구도 초대 링크로 받아요  /  [나만] Modrinth에 없는 파일이라 내 게임에만 들어가요)"
+    $lb = New-Ctl ListBox 15 385 600 130
+    $br = New-Ctl Button 625 385 250 36 '선택한 리소스팩 빼기'
+    $ln = New-Ctl Label 625 428 250 87 "[▶ 마인크래프트 켜기]를 누르면 게임에 들어가요. 친구에게는 [초대 링크 복사]로 새 링크를 보내 주세요."; $ln.ForeColor = [Drawing.Color]::DimGray
+    $lg = New-Ctl TextBox 15 525 860 70; $lg.Multiline = $true; $lg.ReadOnly = $true; $lg.ScrollBars = 'Vertical'
+    $f.Controls.AddRange(@($l1, $tq, $bq, $lv, $ba, $bf, $bi, $l2, $lb, $br, $ln, $lg))
+    $log = { param($m) $lg.AppendText("$m`r`n"); [Windows.Forms.Application]::DoEvents() }
+    $refresh = {
+        $lb.Items.Clear()
+        foreach ($p in (Get-AddedPacks $d)) { $how = '[나만] '; if ($p.projectId) { $how = '[자동] ' }; [void]$lb.Items.Add("$how$($p.title)   $($p.file)") }
+    }
+    $bi.Add_Click({ $f.Cursor = 'WaitCursor'; try { $log.Invoke((Copy-Invite $d)) } finally { $f.Cursor = 'Default' } })
+    $script:packHits = @()
+    $bq.Add_Click({
+            $facets = [uri]::EscapeDataString("[[`"project_type:resourcepack`"],[`"versions:$mc`"]]")
+            try { $r = Invoke-Api "https://api.modrinth.com/v2/search?query=$([uri]::EscapeDataString($tq.Text))&facets=$facets&limit=30" }
+            catch { $log.Invoke("검색 실패: $($_.Exception.Message)"); return }
+            $script:packHits = @($r.hits)
+            $lv.Items.Clear()
+            foreach ($h in $script:packHits) { $it = New-Object Windows.Forms.ListViewItem($h.title); [void]$it.SubItems.Add($h.description); [void]$it.SubItems.Add([string]$h.downloads); [void]$lv.Items.Add($it) }
+            $log.Invoke("검색 결과 $($script:packHits.Count)개")
+        })
+    $tq.Add_KeyDown({ param($s, $e) if ($e.KeyCode -eq 'Enter') { $e.SuppressKeyPress = $true; $bq.PerformClick() } })
+    $ba.Add_Click({
+            if ($lv.SelectedIndices.Count -eq 0) { Show-Msg '목록에서 추가할 리소스팩을 고르세요.'; return }
+            $h = $script:packHits[$lv.SelectedIndices[0]]
+            if (@(Get-AddedPacks $d | Where-Object { $_.projectId -eq $h.project_id }).Count) { Show-Msg "'$($h.title)' 은(는) 이미 넣었어요."; return }
+            $f.Cursor = 'WaitCursor'
+            try {
+                $gv = [uri]::EscapeDataString('["' + $mc + '"]')
+                $vers = @(Invoke-Api "https://api.modrinth.com/v2/project/$($h.project_id)/version?game_versions=$gv")
+                if (-not $vers.Count) { throw "마인크래프트 $mc 용 파일이 없어요." }
+                $ver = $vers | Where-Object { $_.version_type -eq 'release' } | Select-Object -First 1; if (-not $ver) { $ver = $vers[0] }
+                $file = $ver.files | Where-Object primary | Select-Object -First 1; if (-not $file) { $file = $ver.files[0] }
+                if (-not (Test-PackFileName $file.filename)) { throw "파일 이름이 이상해서 넣지 않았어요: $($file.filename)" }
+                New-Item -ItemType Directory -Force $rp | Out-Null
+                $dl = Join-Path $rp $file.filename
+                & curl.exe -L --fail -s -S --max-time 300 -o $dl $file.url
+                if ($LASTEXITCODE -ne 0 -or (Get-FileHash -LiteralPath $dl -Algorithm SHA1).Hash -ne $file.hashes.sha1.ToUpper()) { Remove-Item -LiteralPath $dl -Force -ErrorAction SilentlyContinue; throw '파일을 받지 못했어요.' }
+                Save-AddedPacks $d (@(Get-AddedPacks $d) + [pscustomobject]@{ projectId = $h.project_id; title = $h.title; file = $file.filename; source = 'modrinth' })
+                $log.Invoke("추가: $($h.title) $($ver.version_number)  ->  내 게임 + 친구(초대 링크)")
+            }
+            catch { $log.Invoke("실패: $($_.Exception.Message)") }
+            finally { $f.Cursor = 'Default'; & $refresh }
+        })
+    $bf.Add_Click({
+            $o = New-Object Windows.Forms.OpenFileDialog; $o.Filter = '리소스팩 (*.zip)|*.zip'; $o.Multiselect = $true
+            if ($o.ShowDialog($f) -ne 'OK') { return }
+            New-Item -ItemType Directory -Force $rp | Out-Null
+            $f.Cursor = 'WaitCursor'
+            try {
+                foreach ($p in $o.FileNames) {
+                    $leaf = Split-Path $p -Leaf; $z = $null; $isPack = $false
+                    try { $z = [IO.Compression.ZipFile]::OpenRead($p); $isPack = [bool]$z.GetEntry('pack.mcmeta') } catch { } finally { if ($z) { $z.Dispose() } }
+                    if (-not $isPack) { $log.Invoke("'$leaf' 은(는) 리소스팩이 아니에요. (압축 파일 바로 안에 pack.mcmeta 가 있어야 해요)"); continue }
+                    Copy-Item -LiteralPath $p -Destination $rp -Force
+                    # The same file on Modrinth can travel in the invite code; anything else stays on this PC (passing it on would be redistribution)
+                    $rec = [pscustomobject]@{ projectId = ''; title = $leaf; file = $leaf; source = 'file' }
+                    try {
+                        $sha = (Get-FileHash -LiteralPath $p -Algorithm SHA1).Hash.ToLower()
+                        $v = Invoke-Api "https://api.modrinth.com/v2/version_file/$($sha)?algorithm=sha1"
+                        $mf = $v.files | Where-Object { $_.hashes.sha1 -eq $sha } | Select-Object -First 1
+                        if ($v.project_id -and $mf -and (Test-PackFileName $mf.filename)) { $rec.projectId = $v.project_id; $rec | Add-Member -NotePropertyName mrFile -NotePropertyValue $mf.filename }
+                    }
+                    catch { }
+                    Save-AddedPacks $d (@(Get-AddedPacks $d | Where-Object { $_.file -ne $leaf }) + $rec)
+                    if ($rec.projectId) { $log.Invoke("추가: $leaf  ->  내 게임 + 친구(Modrinth에 있는 파일이라 초대 링크로 받아요)") }
+                    else { $log.Invoke("추가: $leaf  ->  내 게임에만 (Modrinth에 없는 파일이라 친구에게는 안 가요. 친구에게 파일을 직접 주면 재배포 문제가 될 수 있어요)") }
+                }
+            }
+            finally { $f.Cursor = 'Default'; & $refresh }
+        })
+    $br.Add_Click({
+            if ($lb.SelectedIndex -lt 0) { return }
+            $list = @(Get-AddedPacks $d); $p = $list[$lb.SelectedIndex]
+            $rm = Join-Path $d '_removed_packs'; New-Item -ItemType Directory -Force $rm | Out-Null
+            $src = Join-Path $rp $p.file; if (Test-Path -LiteralPath $src) { Move-Item -LiteralPath $src -Destination $rm -Force }
+            Save-AddedPacks $d @($list | Where-Object { $_.file -ne $p.file }); & $refresh
+            $log.Invoke("뺐어요: $($p.title)  (다음에 [▶ 마인크래프트 켜기]를 누르면 게임에서도 빠져요. 파일은 _removed_packs 폴더에 있어요)")
+        })
+    & $refresh
+    [void]$f.ShowDialog($form)
+}
+$btnPacks.Add_Click({ Show-PackManager })
 
 # ---------------- Security check ----------------
 function ConvertFrom-PropEscape([string]$v) {
@@ -2844,7 +3019,12 @@ function Get-JoinCode($d) {
     # official page the host gave for each, and download it there themselves
     $links = @(Get-AddedMods $d | Where-Object { $_.forClient -and -not $_.projectId -and $_.PSObject.Properties['sourceUrl'] -and (Test-ModUrl $_.sourceUrl) } |
         ForEach-Object { [ordered]@{ t = ([string]$_.title).Substring(0, [Math]::Min(80, ([string]$_.title).Length)); u = [string]$_.sourceUrl } })
-    $o = [ordered]@{ v = 1; p = $i.pack; k = (Get-VersionKey $d $i); n = (Split-Path $d -Leaf); a = (Get-PlayitAddress); m = $mods; l = $links }
+    # Resource packs: only the ones that are Modrinth files (the friend's copy fetches them there)
+    $rps = @(Get-AddedPacks $d | Where-Object { $_.projectId } | ForEach-Object {
+            $fn = $_.file; if ($_.PSObject.Properties['mrFile'] -and $_.mrFile) { $fn = $_.mrFile }
+            if (Test-PackFileName $fn) { [ordered]@{ p = $_.projectId; f = $fn } }
+        })
+    $o = [ordered]@{ v = 1; p = $i.pack; k = (Get-VersionKey $d $i); n = (Split-Path $d -Leaf); a = (Get-PlayitAddress); m = $mods; l = $links; r = $rps }
     # A pack the host added by hand is unknown to the friend's copy: the code carries it (CurseForge: just this version)
     $cp = Get-CustomPacks | Where-Object { $_.id -eq $i.pack } | Select-Object -First 1
     if ($cp) {
@@ -2939,7 +3119,7 @@ function Find-ClipboardCode {
 # =====================================================================================
 # Tab: join a friend's server
 # =====================================================================================
-$lblJ1 = New-Ctl Label 10 10 940 44 "방장이 보내 준 초대 링크의 [초대 코드 복사]를 누르고 이 프로그램을 켜면 코드가 저절로 들어가요. (안내 글은 통째로 붙여 넣어도 돼요)`nModrinth 모드팩은 알아서 설치하고, CurseForge 모드팩은 CurseForge 앱으로 설치하는 순서를 알려 줘요."
+$lblJ1 = New-Ctl Label 10 10 940 44 "방장이 보내 준 초대 링크의 [초대 코드 복사]를 누르고 이 프로그램을 켜면 코드가 저절로 들어가요. (안내 글은 통째로 붙여 넣어도 돼요)`nModrinth 모드팩도 CurseForge 모드팩도 이 프로그램이 알아서 설치해요."
 $txtCode = New-Ctl TextBox 10 58 940 84; $txtCode.Multiline = $true; $txtCode.ScrollBars = 'Vertical'
 $lblJInfo = New-Ctl Label 10 148 940 60 '(아직 붙여 넣지 않았어요)'; $lblJInfo.ForeColor = [Drawing.Color]::DimGray
 $lblJAddr = New-Ctl Label 10 216 100 24 '서버 주소'
@@ -2952,8 +3132,9 @@ $lblJList = New-Ctl Label 10 312 400 22 '설치해 둔 친구 서버 (다음부�
 $lstJoined = New-Ctl ListBox 10 336 400 196; $lstJoined.HorizontalScrollbar = $true
 $btnJoinAgain = New-Ctl Button 10 538 195 38 '▶ 게임 켜기'; $btnJoinAgain.Font = $bold
 $btnJoinDel = New-Ctl Button 215 538 195 38 '지우기'
+$btnJoinJar = New-Ctl Button 10 582 400 34 '원본 링크에서 받은 모드 파일 넣기 (.jar)'
 $txtJoinLog = New-Ctl TextBox 420 312 530 304; $txtJoinLog.Multiline = $true; $txtJoinLog.ReadOnly = $true; $txtJoinLog.ScrollBars = 'Vertical'; $txtJoinLog.Font = $mono; $txtJoinLog.BackColor = [Drawing.Color]::White
-$tabJoin.Controls.AddRange(@($lblJ1, $txtCode, $lblJInfo, $lblJAddr, $txtJAddr, $lblJRam, $numJRam, $btnJoin, $lblJoinWork, $lblJList, $lstJoined, $btnJoinAgain, $btnJoinDel, $txtJoinLog))
+$tabJoin.Controls.AddRange(@($lblJ1, $txtCode, $lblJInfo, $lblJAddr, $txtJAddr, $lblJRam, $numJRam, $btnJoin, $lblJoinWork, $lblJList, $lstJoined, $btnJoinAgain, $btnJoinDel, $btnJoinJar, $txtJoinLog))
 
 $script:joinCode = $null
 $txtCode.Add_TextChanged({
@@ -2972,6 +3153,7 @@ $txtCode.Add_TextChanged({
         if (-not $p) { $lblJInfo.ForeColor = [Drawing.Color]::Firebrick; $lblJInfo.Text = '이 프로그램이 모르는 모드팩이나 버전이에요. 프로그램을 껐다가 다시 켜서 최신 버전으로 업데이트한 다음 다시 붙여 넣어 주세요.'; $script:joinCode = $null; return }
         $lblJInfo.ForeColor = [Drawing.Color]::DarkGreen
         $nl = @($c.l).Count; $lk = ''; if ($nl) { $lk = " (+ 원본 링크로 받는 모드 $($nl)개)" }
+        $nr = @($c.r | Where-Object { $_ }).Count; if ($nr) { $lk += "   |   리소스팩 $($nr)개" }
         $how = '아래 [▶ 설치하고 게임 켜기]를 누르세요.'
         $lblJInfo.Text = "서버: $($c.n)   |   모드팩: $($p.name)   |   방장이 추가한 모드: $(@($c.m).Count)개$lk$extra`n$how"
         if ($c.a) { $txtJAddr.Text = $c.a; $lblJoinWork.Text = '' }
@@ -2988,15 +3170,15 @@ function Test-PackDef($c) {
     }
     return $false
 }
-function ConvertTo-ModsB64($list) {
+function ConvertTo-ModsB64($list, [string]$ext = 'jar') {
     # Written by hand: Windows PowerShell 5.1 re-serializes arrays that came out of ConvertFrom-Json as {"value":[...],"Count":n}
     $items = @(foreach ($x in @($list)) {
-            if ("$($x.p)" -match '^[A-Za-z0-9]{4,16}$' -and "$($x.f)" -match '^[A-Za-z0-9 ._+()\[\]-]+\.jar$') { '{"p":"' + $x.p + '","f":"' + $x.f + '"}' }
+            if ("$($x.p)" -match '^[A-Za-z0-9]{4,16}$' -and "$($x.f)" -match "^[A-Za-z0-9 ._+()\[\]-]+\.$ext`$") { '{"p":"' + $x.p + '","f":"' + $x.f + '"}' }
         })
     if (-not $items.Count) { return '' }
     return [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('[' + ($items -join ',') + ']'))
 }
-function Start-JoinGame($c, [string]$addr, [int]$ram, $modsB64 = $null) {   # untyped: a [string] parameter would turn $null into ''
+function Start-JoinGame($c, [string]$addr, [int]$ram, $modsB64 = $null, $packsB64 = $null) {   # untyped: a [string] parameter would turn $null into ''
     if ($script:installProc) { Show-Msg '다른 설치가 진행 중이에요. 끝난 다음에 해 주세요.'; return }
     if ($addr -match '^\s*(127.0.0.1|127\.0\.0\.1)\s*$') { $addr = '127.0.0.1' } else { $addr = ConvertTo-PlayitAddress $addr }
     if (-not $addr) { Show-Msg "서버 주소를 넣어 주세요.`n방장에게 '어쩌구.joinmc.link' 같은 주소를 물어봐서 [서버 주소] 칸에 넣으면 돼요."; return }
@@ -3008,6 +3190,7 @@ function Start-JoinGame($c, [string]$addr, [int]$ram, $modsB64 = $null) {   # un
     if (-not (Stop-GameIfRunning $gd)) { return }
     if (-not (Close-McLauncher)) { return }
     $mods = $modsB64; if ($null -eq $mods) { $mods = ConvertTo-ModsB64 $c.m }
+    $rps = $packsB64; if ($null -eq $rps) { $rps = ConvertTo-ModsB64 $c.r 'zip' }
     # Mods only reachable by link: kept beside the game, so [▶ 게임 켜기] next time still knows them
     New-Item -ItemType Directory -Force (Join-Path $gd $ManualModsDir) | Out-Null
     if ($c.PSObject.Properties['l']) {
@@ -3017,7 +3200,7 @@ function Start-JoinGame($c, [string]$addr, [int]$ram, $modsB64 = $null) {   # un
     }
     $script:gameJob = @{ gameDir = $gd }
     $tabs.SelectedTab = $tabJoin
-    Start-InstallJob "-Client -PackId $($c.p) -VersionKey `"$($c.k)`" -Name `"$($c.n)`" -GameDir `"$gd`" -Address `"$addr`" -AddedMods `"$mods`" -GameRamGB $ram" 'join'
+    Start-InstallJob "-Client -PackId $($c.p) -VersionKey `"$($c.k)`" -Name `"$($c.n)`" -GameDir `"$gd`" -Address `"$addr`" -AddedMods `"$mods`" -AddedPacks `"$rps`" -GameRamGB $ram" 'join'
 }
 # ---------------- what a friend downloads and puts in by hand (never files passed on by the host) ----------------
 $ManualModsDir = '직접_받은_모드'
@@ -3204,7 +3387,8 @@ $btnJoinAgain.Add_Click({
             $newB64 = ConvertTo-ModsB64 $new.m
             $oldLinks = @(Read-JsonList (Join-Path $gdir 'mod-links.json'))
             $ch = Get-JoinChanges @() $oldLinks ([pscustomobject]@{ m = @(); l = @($new.l) })
-            if ($new.p -ne $m.pack -or $new.k -ne $m.versionKey -or $newB64 -ne [string]$m.addedMods -or $ch.any) {
+            $oldPacks = ''; if ($m.PSObject.Properties['addedPacks']) { $oldPacks = [string]$m.addedPacks }
+            if ($new.p -ne $m.pack -or $new.k -ne $m.versionKey -or $newB64 -ne [string]$m.addedMods -or (ConvertTo-ModsB64 $new.r 'zip') -ne $oldPacks -or $ch.any) {
                 $txtJoinLog.AppendText("방장이 모드(또는 모드팩 버전)를 바꿨어요. 알아서 맞출게요.`r`n")
                 Start-JoinGame $new $addr ([int]$m.ramGB); return
             }
@@ -3213,7 +3397,8 @@ $btnJoinAgain.Add_Click({
         else { $txtJoinLog.AppendText("방장 서버가 꺼져 있거나 확인할 수 없어서 지난번 그대로 켜요.`r`n") }
         # The same added-mods value as last time, untouched, so an unchanged game is recognised and left alone
         $c = [pscustomobject]@{ p = $m.pack; k = $m.versionKey; n = $m.name }
-        Start-JoinGame $c $addr ([int]$m.ramGB) ([string]$m.addedMods)
+        $oldPacks = ''; if ($m.PSObject.Properties['addedPacks']) { $oldPacks = [string]$m.addedPacks }
+        Start-JoinGame $c $addr ([int]$m.ramGB) ([string]$m.addedMods) $oldPacks
     })
 $btnJoinDel.Add_Click({
         if ($lstJoined.SelectedIndex -lt 0) { return }
@@ -3235,6 +3420,38 @@ $btnJoinDel.Add_Click({
         Remove-Item -LiteralPath $g[0] -Recurse -Force -ErrorAction SilentlyContinue
         Update-JoinedList
     })
+$btnJoinJar.Add_Click({
+        # Jars the friend downloaded from the links the host gave: kept in 직접_받은_모드 (copied into mods at every start)
+        if ($lstJoined.SelectedIndex -lt 0) { Show-Msg '먼저 위의 [설치해 둔 친구 서버] 목록에서 서버를 고르세요.'; return }
+        $g = $script:joined[$lstJoined.SelectedIndex]
+        if ($g[1].kind -eq 'curseforge') { Show-Msg "'$($g[1].name)' 은(는) 예전에 CurseForge 앱으로 깔았던 서버예요.`n먼저 [▶ 게임 켜기]를 한 번 누르면 이 프로그램이 게임을 준비하고, 그다음에 모드 파일을 넣을 수 있어요."; return }
+        $gd = $g[0]
+        $o = New-Object Windows.Forms.OpenFileDialog; $o.Filter = '모드 파일 (*.jar)|*.jar'; $o.Multiselect = $true; $o.Title = '원본 링크에서 받은 모드 파일을 고르세요 (여러 개 고를 수 있어요)'
+        $dl = Join-Path $env:USERPROFILE 'Downloads'; if (Test-Path -LiteralPath $dl) { $o.InitialDirectory = $dl }
+        if ($o.ShowDialog($form) -ne 'OK') { return }
+        Add-ManualModFiles $gd $g[1].name $o.FileNames
+    })
+function Add-ManualModFiles([string]$gd, [string]$name, $files) {
+    $keep = Join-Path $gd $ManualModsDir; New-Item -ItemType Directory -Force $keep | Out-Null
+    $n = 0
+    foreach ($p in @($files)) {
+        $leaf = Split-Path $p -Leaf
+        if ([McsmScan]::ScanJar($p) -eq 1) {
+            Show-Msg "⚠ '$leaf' 은(는) 악성코드(fractureiser)에 감염된 파일이에요. 넣지 않았어요.`n`n이 파일은 지우고, Windows 보안에서 [전체 검사]를 해 주세요. 모드는 공식 사이트에서만 받으세요." 'Warning'
+            continue
+        }
+        Copy-Item -LiteralPath $p -Destination $keep -Force; $n++
+        $txtJoinLog.AppendText("넣었어요: $leaf`r`n")
+    }
+    if (-not $n) { return }
+    [void](Sync-ManualMods $gd)
+    # What the host's links still ask for, so the friend sees whether anything is left
+    $links = @(Read-JsonList (Join-Path $gd 'mod-links.json'))
+    $have = @(Get-ChildItem -LiteralPath $keep -Filter '*.jar' -File -ErrorAction SilentlyContinue).Count
+    $more = ''; if ($links.Count) { $more = "`n(방장이 링크로 알려 준 모드는 $($links.Count)개이고, 넣은 파일은 지금 $($have)개예요)" }
+    $txtJoinLog.AppendText("모드 파일 $($n)개를 '$name' 게임에 넣었어요. 다음에 게임을 켤 때부터 들어가요.`r`n")
+    Show-Msg "모드 파일 $($n)개를 넣었어요.`n[▶ 게임 켜기]를 누르면 들어간 채로 켜져요. 다시 설치해도 안 지워져요.$more"
+}
 Update-JoinedList
 
 # =====================================================================================
