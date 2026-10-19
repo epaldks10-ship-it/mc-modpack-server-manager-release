@@ -911,12 +911,14 @@ function Start-Server([switch]$Local) {
         }
         if ($why -and -not (Ask-YesNo "$why 친구들은 들어올 수 없어요.`n([Playit 연결 설정]에서 넣을 수 있어요. 나는 127.0.0.1 로 들어갈 수 있어요)`n`n그래도 켤까요?")) { return }
         Start-Playit
+        $voiceNote = ''; if (-not $why) { $voiceNote = Sync-VoiceChat $d }   # before the server reads its config
     }
     $i = Read-Json (Join-Path $d 'server-info.json')
     $mods = @(Get-ChildItem -LiteralPath (Join-Path $d 'mods') -Filter '*.jar' -ErrorAction SilentlyContinue).Count
     $expect = 40 + [int]($mods * 0.35); if ($i -and $i.bootSeconds) { $expect = [int]$i.bootSeconds }
     $txtConsole.Clear()
     $txtConsole.AppendText("[관리 프로그램] '$($lstSrv.SelectedItem)' 서버를 켜는 중이에요. 끌 때는 [■ 서버 끄기]를 눌러 주세요.`r`n")
+    if (-not $Local -and $voiceNote) { $txtConsole.AppendText("$voiceNote`r`n") }
     $script:wlSent.Clear()
     $proc = New-Object McProc($java, $li.args, $d, [Text.Encoding]::Default.CodePage)
     $script:srv = [pscustomobject]@{
@@ -1417,6 +1419,41 @@ function Sync-PlayitAddress {
     if (-not $a) { return @{ address = $null; note = 'notunnel' } }
     if ($a -ne (Get-PlayitAddress)) { Set-PlayitAddress $a }
     return @{ address = $a; note = 'ok' }
+}
+function Sync-VoiceChat($d) {
+    # Simple Voice Chat talks over its own UDP port (24454), which the Minecraft tunnel doesn't carry: friends get a
+    # crossed-out icon. Once the host has made a UDP tunnel in Playit, its address goes into voice_host by itself.
+    # Returns a line for the console ('' when there is nothing to say).
+    $cfg = Join-Path $d 'config\voicechat\voicechat-server.properties'
+    $hasMod = (Test-Path -LiteralPath $cfg) -or @(Get-ChildItem -LiteralPath (Join-Path $d 'mods') -Filter '*voicechat*.jar' -File -ErrorAction SilentlyContinue).Count
+    if (-not $hasMod) { return '' }
+    $latin1 = [Text.Encoding]::GetEncoding(28591)
+    $lines = @(); if (Test-Path -LiteralPath $cfg) { $lines = @([IO.File]::ReadAllLines($cfg, $latin1)) }
+    $port = 24454; $cur = ''
+    foreach ($l in $lines) {
+        if ($l -match '^\s*port\s*=\s*(-?\d+)\s*$') { $port = [int]$Matches[1]; if ($port -le 0) { $port = 25565 } }   # -1: the Minecraft port
+        if ($l -match '^\s*voice_host\s*=\s*(.*)$') { $cur = $Matches[1].Trim() }
+    }
+    $key = Get-PlayitKey; if (-not $key) { return '' }
+    try { $res = Invoke-PlayitRundata $key } catch { return '' }
+    if ($res.status -ne 'success') { return '' }
+    $udp = @($res.data.tunnels | ForEach-Object { $_ } | Where-Object { $_ -and -not $_.disabled_reason -and "$($_.port_type)" -in 'udp', 'both' -and "$($_.tunnel_type)" -notmatch 'minecraft' })
+    if (-not $udp.Count) {
+        return "[관리 프로그램] 보이스 채팅 모드가 있어요. 친구도 음성을 쓰려면 playit.gg에서 터널을 하나 더 만드세요: 종류 UDP, 이 PC의 에이전트, 127.0.0.1 / $port. 만들고 나서 서버를 다시 켜면 알아서 연결해요."
+    }
+    # The tunnel pointed at the voice port, or else the only UDP tunnel there is
+    $t = $udp | Where-Object { @($_.agent_config.fields | Where-Object { "$($_.value)" -match "(^|:)$port$" }).Count } | Select-Object -First 1
+    if (-not $t) { $t = $udp[0] }
+    $a = ConvertTo-PlayitAddress ([string]$t.display_address)
+    if (-not $a) { return '' }
+    if ($cur -eq $a) { return "[관리 프로그램] 보이스 채팅: 친구도 음성으로 연결돼요 ($a)" }
+    $set = $false
+    $out = @(foreach ($l in $lines) { if ($l -match '^\s*voice_host\s*=') { "voice_host=$a"; $set = $true } else { $l } })
+    if (-not $set) { $out += "voice_host=$a" }
+    if (-not @($out | Where-Object { $_ -match '^\s*port\s*=' }).Count) { $out += "port=$port" }
+    New-Item -ItemType Directory -Force (Split-Path $cfg -Parent) | Out-Null
+    [IO.File]::WriteAllLines($cfg, [string[]]$out, $latin1)
+    return "[관리 프로그램] 보이스 채팅을 Playit UDP 터널($a)에 연결했어요. 친구도 음성으로 이야기할 수 있어요. (V 키로 마이크를 골라요)"
 }
 function Find-PlayitAddressInLog {
     # Playit prints the tunnel address when it connects; joinmc.link / ply.gg are its public tunnel domains

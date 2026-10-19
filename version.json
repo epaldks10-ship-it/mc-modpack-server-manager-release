@@ -1,11 +1,11 @@
 {
-    "version":  "1.0.18",
+    "version":  "1.0.19",
     "date":  "2026-10-19",
-    "notes":  "리소스팩을 넣을 수 있어요 (모드 추가 옆 리소스팩 버튼, 게임에서 자동으로 켜짐, 친구도 초대 링크로 받음). 만들어 둔 서버를 지우거나 목록 순서를 바꿀 수 있어요. 친구 서버 탭에서 원본 링크로 받은 모드 파일을 버튼으로 넣을 수 있어요. 모드팩이 기본으로 켜 두는 리소스팩도 자동으로 켜져요.",
+    "notes":  "보이스 채팅(Simple Voice Chat)이 친구에게도 연결돼요. playit.gg에서 UDP 터널(127.0.0.1 / 24454)을 하나 더 만들고 친구랑 하기로 서버를 켜면 알아서 연결해요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "ef52de7386a8fd2ee36179323ee29586d63d311ceed0be5c110206d241862ba7"
+                      "sha256":  "cb3a78bc0781d8d89febd04e3e94bfbd9cf68fd82221b5209fbea0b2bd72b359"
                   },
                   {
                       "path":  "install.ps1",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "98545e8d0188cb36e8fa2dbed76e2d11dcbe3928a98266421c38aeced9e34cd9"
+                      "sha256":  "1b4d0212a2f37e5735c5fa8686daa39fdb809706c3ebb69138f7062a6190f6d2"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "576fb8940cf99149e36186907f042485ffd7fe4c21f8796d28e90d5117d287b5"
+                      "sha256":  "a47fc7206793255017a386b704ce1076d01ed3b557afc85f1a1a407854b6a9fb"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "68636ef88effe8ca647361ae1726dfd767f4a68a8abf5cb697730bebe720a8b5"
+                     "sha256":  "b3bd899c815bfd2f04e116022b9ca9b63fcb6062fc810ce1cd74f8c1b662f26b"
                  }
 }
