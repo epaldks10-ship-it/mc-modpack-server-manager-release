@@ -845,6 +845,72 @@ function Add-MissingClientDeps([string]$mods, $li) {
     }
 }
 
+function Add-ClientOnlyRequired([string]$mods, $li) {
+    # Some mods name a client-only library only on their Modrinth page, not in mods.toml (sodiumoptionsapi and
+    # sodiumdynamiclights -> embeddium), and a server pack leaves client-only mods out: the game then stops with
+    # NoClassDefFoundError. Every jar here is looked up on Modrinth, and a required project that is missing is added
+    # when Modrinth marks it client-only (anything the server runs too would already be in the server pack).
+    $loaders = @($li.loader)
+    $q = '?loaders=' + [uri]::EscapeDataString((ConvertTo-Json -InputObject @($loaders) -Compress)) + '&game_versions=' + [uri]::EscapeDataString("[`"$($li.mc)`"]")
+    for ($round = 1; $round -le 3; $round++) {
+        $jars = @(Get-ChildItem -LiteralPath $mods -Filter '*.jar' -File)
+        if (-not $jars.Count) { return }
+        $hashes = @($jars | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA1).Hash.ToLower() })
+        try { $vers = Invoke-RestMethod -Method Post -Uri 'https://api.modrinth.com/v2/version_files' -ContentType 'application/json' -Body (@{ hashes = $hashes; algorithm = 'sha1' } | ConvertTo-Json) -TimeoutSec 60 }
+        catch { return }
+        $present = @{}; $need = @{}; $clash = @{}
+        foreach ($p in $vers.PSObject.Properties) { $present[$p.Value.project_id] = $true }
+        foreach ($p in $vers.PSObject.Properties) {
+            foreach ($d in @($p.Value.dependencies)) {
+                if (-not $d.project_id) { continue }
+                if ($d.dependency_type -eq 'required' -and -not $present.ContainsKey($d.project_id)) { $need[$d.project_id] = [string]$p.Value.name }
+                elseif ($d.dependency_type -eq 'incompatible') { $clash[$d.project_id] = $true }
+            }
+        }
+        if (-not $need.Count) { return }
+        $ids = @($need.Keys); $wanted = @()
+        for ($i = 0; $i -lt $ids.Count; $i += 100) {
+            $chunk = $ids[$i..([Math]::Min($i + 99, $ids.Count - 1))]
+            try { $res = @(Invoke-RestMethod ("https://api.modrinth.com/v2/projects?ids=" + [uri]::EscapeDataString('["' + ($chunk -join '","') + '"]')) | ForEach-Object { $_ }) } catch { continue }
+            $wanted += @($res | Where-Object { $_.server_side -eq 'unsupported' -and $_.client_side -ne 'unsupported' -and -not $clash.ContainsKey($_.id) })
+        }
+        if (-not $wanted.Count) { return }
+        # What is here already: mod ids (nothing may load twice) and the version ranges the jars ask for
+        $top = @{}; $rangeOf = @{}
+        foreach ($jar in $jars) {
+            $z = $null
+            try {
+                $z = [IO.Compression.ZipFile]::OpenRead($jar.FullName); $r = Get-JarModInfo $z $li.loader
+                foreach ($id in $r.ids) { $top[$id] = $true }
+                foreach ($d in $r.ranges.Keys) { if (-not $rangeOf.ContainsKey($d)) { $rangeOf[$d] = New-Object System.Collections.Generic.List[string] }; $rangeOf[$d].Add($r.ranges[$d]) }
+            }
+            catch { } finally { if ($z) { $z.Dispose() } }
+        }
+        $added = 0
+        foreach ($pr in $wanted) {
+            foreach ($v in @(Get-ModrinthCandidates $pr.id $q | Select-Object -First 5)) {
+                if (@($v.dependencies | Where-Object { $_.dependency_type -eq 'incompatible' -and $present.ContainsKey($_.project_id) }).Count) { continue }
+                $f = $v.files | Where-Object primary | Select-Object -First 1; if (-not $f) { $f = $v.files[0] }
+                if ($f.filename -notmatch '^[A-Za-z0-9 ._+()\[\]-]+\.jar$' -or (Test-Path -LiteralPath (Join-Path $mods $f.filename))) { break }
+                $tmpJar = Join-Path $mods "$($f.filename).check"
+                try { Get-Download $f.url $tmpJar -Sha1 $f.hashes.sha1 } catch { continue }
+                $z = $null; $jinfo = $null
+                try { $z = [IO.Compression.ZipFile]::OpenRead($tmpJar); $jinfo = Get-JarModInfo $z $li.loader } catch { } finally { if ($z) { $z.Dispose() } }
+                $gives = @(); if ($jinfo) { $gives = @($jinfo.ids) }
+                # Already here under another file (a copy that isn't on Modrinth): leave it
+                if (-not $gives.Count -or @($gives | Where-Object { $top.ContainsKey($_) }).Count) { Remove-Item -LiteralPath $tmpJar -Force -ErrorAction SilentlyContinue; break }
+                $bad = @($gives | Where-Object { $id = $_; $rangeOf.ContainsKey($id) -and @($rangeOf[$id] | Where-Object { -not (Test-VersionRange $jinfo.versions[$id] $_) }).Count })
+                if ($bad.Count) { Remove-Item -LiteralPath $tmpJar -Force -ErrorAction SilentlyContinue; continue }
+                Move-Item -LiteralPath $tmpJar -Destination (Join-Path $mods $f.filename) -Force
+                foreach ($g in $gives) { $top[$g] = $true }
+                Info "화면에 꼭 필요한 모드를 넣었어요: $($f.filename) ($($need[$pr.id])에 필요)"
+                $added++; break
+            }
+        }
+        if (-not $added) { return }
+    }
+}
+
 function Test-WeakPc {
     # Integrated graphics (the GPU borrows system RAM and is slow) or 16GB or less: a big modpack needs lighter settings
     $ram = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB
@@ -906,7 +972,7 @@ function Install-Client($pack) {
     }
     else { $verLabel = $VersionKey; $sigSrc = "$($pack.id)|$VersionKey|$AddedMods" }
     # Bumped whenever the way the game folder is built changes, so existing game folders get rebuilt once
-    $sigSrc = "build5|$sigSrc"
+    $sigSrc = "build6|$sigSrc"
     $sha = [Security.Cryptography.SHA256]::Create()
     $sig = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($sigSrc)) | ForEach-Object { $_.ToString('x2') })
 
@@ -931,6 +997,7 @@ function Install-Client($pack) {
         Step '게임에 맞게 모드 정리하는 중'
         Remove-ServerOnlyMods (Join-Path $script:tmp 'mods')
         Add-MissingClientDeps (Join-Path $script:tmp 'mods') $li
+        Add-ClientOnlyRequired (Join-Path $script:tmp 'mods') $li
         if ($pack.source -ne 'modrinth') { Add-PerformanceMods (Join-Path $script:tmp 'mods') $li }
 
         Step '게임 폴더에 넣는 중'

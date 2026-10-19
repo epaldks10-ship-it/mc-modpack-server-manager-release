@@ -1,7 +1,7 @@
 {
-    "version":  "1.0.15",
+    "version":  "1.0.16",
     "date":  "2026-10-19",
-    "notes":  "CurseForge 모드팩도 친구 초대 링크로 클릭 한 번에 게임이 준비돼요 (CurseForge 앱 필요 없음). 게임이 모드 오류 화면(Error loading mods, watermedia 버전)에서 멈추던 문제를 고쳤어요. 게임 켜기를 한 번 더 누르면 알아서 다시 맞춰요.",
+    "notes":  "게임이 Sodium Options API 오류(embeddium 없음)로 멈추던 문제를 고쳤어요. 게임 켜기를 한 번 더 누르면 빠진 모드를 알아서 넣어요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
@@ -9,7 +9,7 @@
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "b0c27cc3847de8d6f163c1d95b9d2c9ce01872d7055ef6136baa900939933f93"
+                      "sha256":  "d7c7aba201d915aae73811cf4bbdbf10c0ed9de27821769f7697d842c58daf12"
                   },
                   {
                       "path":  "packs.json",
@@ -25,11 +25,11 @@
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "c646138cd87adccb736ed6b63feefec3530869669dca4c1122ba2ddbacbbcaf0"
+                      "sha256":  "938e60bf0e7173db40ff40b7ced3c1acee304dab0cdeed19c0e598b29ae1a8de"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "3d893cf8ca943c8dd254597f77366b9adaf57bd9a3f61388edb09e0b6dd9b46f"
+                     "sha256":  "bf3a0de5b2f5f6e0638fe3093eb294c478419f6edff8e013bb003840d73a41c7"
                  }
 }
