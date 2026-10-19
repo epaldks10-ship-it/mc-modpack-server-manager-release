@@ -1,23 +1,23 @@
 {
-    "version":  "1.0.13",
-    "date":  "2026-10-18",
-    "notes":  "방장이 모드를 바꾸면 친구는 [게임 켜기]만 눌러도 알아서 맞춰요(CurseForge 모드팩 포함). 앱으로 하는 친구는 초대 페이지에서 지난번과 달라진 점을 볼 수 있어요.",
+    "version":  "1.0.14",
+    "date":  "2026-10-19",
+    "notes":  "모드팩 추가에 CurseForge 모드팩 페이지 주소를 그대로 붙여 넣어도 돼요. (다운로드 주소도 괜찮아요)",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "90232d5f1c755b14669ba7205ce24324f29b7106f3dd39397b30a1edfa8ef568"
+                      "sha256":  "0cf31d2bdb68f3b2747fddc734c3730361658032f918f88d7217cd39f90fe4b1"
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "fce4030031bf7cebef20528cfe4c655d680b6b12902d89fc7171564f58e6094c"
+                      "sha256":  "24aa415d22a7a7a3558a68d6d71ee0c6011870ec2261cdb4b29af38f7693bb32"
                   },
                   {
                       "path":  "packs.json",
-                      "sha256":  "016aca8eba6baceb191d1f41edd5a5e24288c66b846f5be08a454f8d7fe4b6a7"
+                      "sha256":  "8a057979364464b5a5618c51f35ee8440ead56e461d9bc1e3117872f21fc90dd"
                   },
                   {
                       "path":  "client-only-mods.txt",
-                      "sha256":  "d476de16a2120daf76acd516fd103bd62719cb8efc2d7404d7ffb793092f1551"
+                      "sha256":  "208b7aa817114537e1f001b9f54145ddba9135a45e1e32ac3828b8412046fd7e"
                   },
                   {
                       "path":  "manual.html",
@@ -25,11 +25,11 @@
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "c48e6e8e49a7201f328a87456445464807aaa2ea2826ea6aa0aa64dcb504d540"
+                      "sha256":  "4da7c078da68921aff035847e3c2483c31811bd40124cc8bc029654d58960c29"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "d348e88e177add8930bfd8a7330ad6860bfc12465a622134aa4f7ee48cce35a5"
+                     "sha256":  "9cb3d8669158feac2b179d5b4cbeac955c43b771bff4458a5df194a18205fdde"
                  }
 }

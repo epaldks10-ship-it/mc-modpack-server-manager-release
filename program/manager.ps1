@@ -406,7 +406,7 @@ function Test-ServerPackUrl([string]$u) { return $u -match '^https://(mediafilez
 
 function New-CfPack([int]$projId, [int]$maxVersions = 8) {
     $list = Get-CfJson "https://www.curseforge.com/api/v1/mods/$projId/files?pageIndex=0&pageSize=50&sort=dateCreated&sortDescending=true&removeAlphas=false"
-    if (-not $list.data) { throw "CurseForge에서 $projId 번 모드팩을 찾지 못했어요. 숫자를 다시 확인해 주세요." }
+    if (-not $list.data) { throw "CurseForge에서 $projId 번 모드팩을 찾지 못했어요. 숫자를 다시 확인해 주세요.`n(다운로드 주소 끝의 숫자는 파일 번호라서 안 돼요. 모드팩 페이지 주소를 그대로 붙여 넣어도 돼요)" }
     $mains = @($list.data | Where-Object { $_.hasServerPack -or $_.additionalServerPackFilesCount -gt 0 } | Select-Object -First $maxVersions)
     if (-not $mains.Count) { throw '이 모드팩은 CurseForge에 서버팩을 올려 두지 않았어요. 서버팩이 있는 모드팩만 넣을 수 있어요.' }
     # The pack's name is what every file's display name starts with ("All the Mods 9-1.1.1" -> "All the Mods 9")
@@ -449,13 +449,24 @@ function New-MrPack([string]$text) {
         desc = "$desc (직접 추가한 모드팩)"; ramGB = 6; clientHow = "Modrinth 앱에서 '$($pr.title)' 검색 후 같은 버전 설치"; custom = $true
     }
 }
+function Get-CfProjectId([string]$text) {
+    # A page address names the pack by slug; the number in ".../download/8980840" is a file, not the pack
+    if ($text -match 'curseforge\.com/projects/(\d{3,9})\b') { return [int]$Matches[1] }
+    if ($text -match 'curseforge\.com/minecraft/(mc-mods|texture-packs|shaders|data-packs|worlds|customization|bukkit-plugins)/') { throw '이건 모드팩이 아니라 모드(또는 리소스팩)예요. 모드는 [내 서버] → [모드 추가 / 관리]에서 넣어요.' }
+    if ($text -notmatch 'curseforge\.com/minecraft/modpacks/([A-Za-z0-9_-]+)') { throw "주소를 알아보지 못했어요. CurseForge 모드팩 페이지의 주소를 그대로 붙여 넣거나,`n모드팩 페이지 오른쪽 'About Project' 칸의 Project ID 숫자를 넣어 주세요." }
+    $slug = $Matches[1]
+    # curseforge.com answers page and search requests only to browsers; CFWidget maps the slug to the project number
+    $j = $null; try { $j = Get-CfJson "https://api.cfwidget.com/minecraft/modpacks/$slug" } catch { }
+    if (-not $j -or -not $j.id) { throw "주소로 모드팩 번호를 찾지 못했어요.`n모드팩 페이지 오른쪽 'About Project' 칸의 Project ID 숫자를 넣어 주세요." }
+    return [int]$j.id
+}
 function Show-AddPack {
-    $text = ("" + (Ask-Text "넣을 모드팩을 알려 주세요.`n`n· Modrinth: 모드팩 페이지 주소를 붙여 넣기`n   (예: https://modrinth.com/modpack/better-mc-forge-bmc4)`n`n· CurseForge: 모드팩 페이지 오른쪽 'About Project' 칸의 Project ID 숫자`n   (예: 715572)")).Trim()
+    $text = ("" + (Ask-Text "넣을 모드팩을 알려 주세요.`n`n· Modrinth: 모드팩 페이지 주소를 붙여 넣기`n   (예: https://modrinth.com/modpack/better-mc-forge-bmc4)`n`n· CurseForge: 모드팩 페이지 주소를 붙여 넣기, 또는 'About Project' 칸의 Project ID 숫자`n   (예: https://www.curseforge.com/minecraft/modpacks/all-the-mods-9 또는 715572)")).Trim()
     if (-not $text) { return }
     $form.Cursor = 'WaitCursor'; $lblWork.ForeColor = [Drawing.Color]::DarkGreen; $lblWork.Text = '모드팩 정보를 확인하는 중...'; $form.Refresh()
     try {
         if ($text -match '^\d{3,9}$') { $p = New-CfPack ([int]$text) }
-        elseif ($text -match 'curseforge\.com') { throw "CurseForge는 주소 대신 Project ID 숫자를 넣어 주세요.`n모드팩 페이지 오른쪽 'About Project' 칸에 있어요." }
+        elseif ($text -match 'curseforge\.com') { $p = New-CfPack (Get-CfProjectId $text) }
         else { $p = New-MrPack $text }
         # Already built in? Same Modrinth project, same CurseForge project, or a name that starts the same way
         $norm = { param($s) ([string]$s).ToLower() -replace '[^a-z0-9]', '' }
