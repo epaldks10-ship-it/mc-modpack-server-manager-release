@@ -1,15 +1,15 @@
 {
-    "version":  "1.0.14",
+    "version":  "1.0.15",
     "date":  "2026-10-19",
-    "notes":  "모드팩 추가에 CurseForge 모드팩 페이지 주소를 그대로 붙여 넣어도 돼요. (다운로드 주소도 괜찮아요)",
+    "notes":  "CurseForge 모드팩도 친구 초대 링크로 클릭 한 번에 게임이 준비돼요 (CurseForge 앱 필요 없음). 게임이 모드 오류 화면(Error loading mods, watermedia 버전)에서 멈추던 문제를 고쳤어요. 게임 켜기를 한 번 더 누르면 알아서 다시 맞춰요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "0cf31d2bdb68f3b2747fddc734c3730361658032f918f88d7217cd39f90fe4b1"
+                      "sha256":  "2e246d07877919404bb5170f4c0ca635e615a447a9cd84475a74a053d02c7b91"
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "24aa415d22a7a7a3558a68d6d71ee0c6011870ec2261cdb4b29af38f7693bb32"
+                      "sha256":  "b0c27cc3847de8d6f163c1d95b9d2c9ce01872d7055ef6136baa900939933f93"
                   },
                   {
                       "path":  "packs.json",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "596fc83777f5b2da9b1fa546d6f1a2cefc2f85bce0883c854c5cc3bdec080c37"
+                      "sha256":  "b382caa94829d4970072648003dba824d2f4f2a5eeadf8bfa3540374b252d4f8"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "4da7c078da68921aff035847e3c2483c31811bd40124cc8bc029654d58960c29"
+                      "sha256":  "c646138cd87adccb736ed6b63feefec3530869669dca4c1122ba2ddbacbbcaf0"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "9cb3d8669158feac2b179d5b4cbeac955c43b771bff4458a5df194a18205fdde"
+                     "sha256":  "3d893cf8ca943c8dd254597f77366b9adaf57bd9a3f61388edb09e0b6dd9b46f"
                  }
 }

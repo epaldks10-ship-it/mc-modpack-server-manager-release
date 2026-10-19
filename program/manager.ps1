@@ -2972,7 +2972,7 @@ $txtCode.Add_TextChanged({
         if (-not $p) { $lblJInfo.ForeColor = [Drawing.Color]::Firebrick; $lblJInfo.Text = '이 프로그램이 모르는 모드팩이나 버전이에요. 프로그램을 껐다가 다시 켜서 최신 버전으로 업데이트한 다음 다시 붙여 넣어 주세요.'; $script:joinCode = $null; return }
         $lblJInfo.ForeColor = [Drawing.Color]::DarkGreen
         $nl = @($c.l).Count; $lk = ''; if ($nl) { $lk = " (+ 원본 링크로 받는 모드 $($nl)개)" }
-        $how = '아래 [▶ 설치하고 게임 켜기]를 누르세요.'; if ($p.source -eq 'curseforge') { $how = '아래 [▶ 설치하고 게임 켜기]를 누르면 CurseForge 앱으로 설치하는 순서를 알려 줘요.' }
+        $how = '아래 [▶ 설치하고 게임 켜기]를 누르세요.'
         $lblJInfo.Text = "서버: $($c.n)   |   모드팩: $($p.name)   |   방장이 추가한 모드: $(@($c.m).Count)개$lk$extra`n$how"
         if ($c.a) { $txtJAddr.Text = $c.a; $lblJoinWork.Text = '' }
         else { $txtJAddr.Text = ''; $lblJoinWork.ForeColor = [Drawing.Color]::DarkOrange; $lblJoinWork.Text = "방장이 아직 Playit을 연결하지 않아서 주소가 비어 있어요.`n방장에게 [Playit 연결 설정]을 해 달라고 하거나, 주소를 물어봐서 위 칸에 넣어 주세요." }
@@ -3000,10 +3000,6 @@ function Start-JoinGame($c, [string]$addr, [int]$ram, $modsB64 = $null) {   # un
     if ($script:installProc) { Show-Msg '다른 설치가 진행 중이에요. 끝난 다음에 해 주세요.'; return }
     if ($addr -match '^\s*(127.0.0.1|127\.0\.0\.1)\s*$') { $addr = '127.0.0.1' } else { $addr = ConvertTo-PlayitAddress $addr }
     if (-not $addr) { Show-Msg "서버 주소를 넣어 주세요.`n방장에게 '어쩌구.joinmc.link' 같은 주소를 물어봐서 [서버 주소] 칸에 넣으면 돼요."; return }
-    # CurseForge modpacks are installed with CurseForge's own app: this program does not fetch their files for a friend
-    $jp = $packs | Where-Object { $_.id -eq $c.p } | Select-Object -First 1
-    if (-not $jp -and (Test-PackDef $c)) { $jp = $c.d }
-    if ($jp -and $jp.source -eq 'curseforge') { [void](Show-JoinGuide $c $jp $addr ''); return }
     if (-not (Test-McLauncher)) { return }
     if (-not ($packs | Where-Object { $_.id -eq $c.p }) -or (($packs | Where-Object { $_.id -eq $c.p }).source -eq 'curseforge' -and -not (($packs | Where-Object { $_.id -eq $c.p }).versions | Where-Object label -eq $c.k))) {
         if (Test-PackDef $c) { Add-CustomPack $c.d -NoSelect }
@@ -3196,13 +3192,13 @@ $btnJoinAgain.Add_Click({
         $new = Find-HostCode "$($m.address)" "$($m.name)"; $form.Cursor = 'Default'
         $addr = "$($m.address)"; if ($new -and $new.a) { $addr = "$($new.a)" }
         if ($m.kind -eq 'curseforge') {
-            $p = $packs | Where-Object { $_.id -eq $m.pack } | Select-Object -First 1; if (-not $p) { $p = [pscustomobject]@{ name = $m.packName; page = '' } }
-            if (-not $new) { [Windows.Forms.Clipboard]::SetText($addr); Show-Msg "방장 서버가 꺼져 있거나 확인할 수 없었어요. (모드가 바뀌었는지 모르는 채로 해요)`n`nCurseForge 앱에서 '$($m.packName)'을(를) Play → 멀티플레이 → 서버 접속.`n주소를 복사해 뒀어요: $addr"; return }
-            if ($new.p -ne $m.pack -or $new.k -ne $m.versionKey) { Show-Msg "방장이 모드팩을 바꿨어요 ('$($new.k)'). 새 버전을 CurseForge 앱으로 설치하는 순서를 다시 보여 줄게요."; [void](Show-JoinGuide $new ($packs | Where-Object { $_.id -eq $new.p } | Select-Object -First 1) $addr ''); return }
-            $ch = Get-JoinChanges (ConvertFrom-ModsB64 ([string]$m.addedMods)) @($m.links) $new
-            if (-not $ch.any) { [Windows.Forms.Clipboard]::SetText($addr); Show-Msg "방장 서버와 모드가 같아요.`n`nCurseForge 앱에서 '$($m.packName)'을(를) Play → 멀티플레이 → 서버 접속.`n주소를 복사해 뒀어요: $addr"; return }
-            $txtJoinLog.AppendText("방장이 모드를 바꿨어요: 새 모드 $($ch.addMods.Count + $ch.addLinks.Count)개, 뺀 모드 $($ch.delMods.Count + $ch.delLinks.Count)개`r`n")
-            [void](Show-JoinGuide $new $p $addr '' $ch); return
+            # Joined in 1.0.12-1.0.14, when CurseForge packs went through CurseForge's app: this program now sets the game up itself
+            if (-not $new) { [Windows.Forms.Clipboard]::SetText($addr); Show-Msg "방장 서버가 꺼져 있거나 확인할 수 없었어요.`n`n방장 서버가 켜진 다음 다시 누르면 이 프로그램이 게임을 알아서 준비해요.`n(지금은 CurseForge 앱에서 '$($m.packName)'을(를) Play → 멀티플레이 → 서버 접속. 주소를 복사해 뒀어요: $addr)"; return }
+            $txtJoinLog.AppendText("이제 CurseForge 모드팩도 이 프로그램이 알아서 준비해요. (CurseForge 앱의 모드팩은 그대로 둬요)`r`n")
+            $script:gameJob = $null; Start-JoinGame $new $addr (Get-GameRam 0)
+            # The old record goes only once the setup has really started (Start-JoinGame may stop at a question)
+            if ($script:gameJob -and $script:gameJob.gameDir -eq (Join-Path $GameRoot "join-$($new.n)")) { Remove-Item -LiteralPath $gdir -Recurse -Force -ErrorAction SilentlyContinue; Update-JoinedList }
+            return
         }
         if ($new) {
             $newB64 = ConvertTo-ModsB64 $new.m

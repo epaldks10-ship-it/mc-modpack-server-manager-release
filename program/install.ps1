@@ -542,6 +542,31 @@ function Get-ModrinthClient($ver, [string]$stage) {
     return $li
 }
 
+function Get-CurseForgeClient($pack, [string]$label, [string]$stage) {
+    # CurseForge only allows its own app to fetch many mods one by one, but the server pack is a single public
+    # download from CurseForge's own file server with every mod the server needs; the client-only mods it lacks
+    # are filled in afterwards (Add-MissingClientDeps), so a friend joins in one click like with a Modrinth pack
+    $ver = $pack.versions | Where-Object label -eq $label | Select-Object -First 1
+    if (-not $ver) { throw "버전을 찾지 못했어요: $label" }
+    if ($ver.url -notmatch '^https://(mediafilez|edge)\.forgecdn\.net/files/\d+/\d+/[^/?#]+$') { throw '모드팩 다운로드 주소가 CurseForge가 아니에요.' }
+    $zip = Join-Path $Cache ([uri]::UnescapeDataString(($ver.url -split '/')[-1]))
+    $need = [long]($ver.size * 1.6) + 700MB
+    if (-not ((Test-Path -LiteralPath $zip) -and (Get-Item -LiteralPath $zip).Length -eq $ver.size)) { $need += $ver.size }
+    Assert-FreeSpace $need
+    Step "모드팩 받는 중 ($([math]::Round($ver.size / 1GB, 2)) GB, 몇 분 걸려요)"
+    $sha = ''; if ($ver.PSObject.Properties['sha256']) { $sha = [string]$ver.sha256 }
+    Get-Download $ver.url $zip -Size $ver.size -Sha256 $sha
+    Step '압축 푸는 중'
+    $x = Join-Path $stage '_pack'
+    [IO.Compression.ZipFile]::ExtractToDirectory($zip, $x)
+    $src = $x; $top = @(Get-ChildItem -LiteralPath $x -Force)
+    if ($top.Count -eq 1 -and $top[0].PSIsContainer) { $src = $top[0].FullName }
+    $li = Find-Loader $src $pack
+    foreach ($d in @('mods') + $ClientDirs) { $p = Join-Path $src $d; if (Test-Path -LiteralPath $p) { Copy-Tree $p (Join-Path $stage $d) } }
+    Remove-Item -LiteralPath $x -Recurse -Force
+    return $li
+}
+
 function Get-ServerClient([string]$srv, [string]$stage) {
     # The host's own server already has every file: mods it runs, client-only mods it set aside, and the extra mods for friends
     $i = Get-Content -LiteralPath (Join-Path $srv 'server-info.json') -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -587,6 +612,7 @@ function Get-JarModInfo($zip, [string]$loader = 'forge') {
     $ids = New-Object System.Collections.Generic.List[string]; $deps = New-Object System.Collections.Generic.List[string]
     $fabricDeps = New-Object System.Collections.Generic.List[string]; $hasToml = $false
     $nested = New-Object System.Collections.Generic.List[string]   # jar-in-jar libraries: satisfy needs, but are shared, not duplicates
+    $ranges = @{}; $versions = @{}   # needed id -> versionRange ("[2.1.34,2.2)"); provided id -> its own version
     foreach ($e in @($zip.Entries)) {
         $n = $e.FullName
         # Forge reads only mods.toml; NeoForge prefers neoforge.mods.toml, where a dependency without a type is required
@@ -594,16 +620,20 @@ function Get-JarModInfo($zip, [string]$loader = 'forge') {
         if ($n -eq $tomlName) {
             $hasToml = $true
             $sr = New-Object IO.StreamReader($e.Open()); $toml = $sr.ReadToEnd(); $sr.Dispose()
-            $sect = ''; $dep = $null
+            $sect = ''; $dep = $null; $mod = $null
+            $endDep = { if ($dep) { foreach ($id in @(Resolve-TomlDep $dep $tomlName)) { $deps.Add($id); if ($dep['versionRange']) { $ranges[$id] = $dep['versionRange'] } } } }
+            $endMod = { if ($mod -and $mod['modId']) { $ids.Add($mod['modId']); if ($mod['version']) { $versions[$mod['modId']] = $mod['version'] } } }
             foreach ($ln in ($toml -split "`n")) {
                 $l = $ln.Trim()
-                if ($l -match '^\[\[\s*mods\s*\]\]') { $sect = 'mods'; continue }
-                if ($l -match '^\[\[\s*dependencies\.') { if ($dep) { $deps.AddRange([string[]]@(Resolve-TomlDep $dep $tomlName)) }; $sect = 'dep'; $dep = @{}; continue }
-                if ($l -match '^\[') { if ($dep) { $deps.AddRange([string[]]@(Resolve-TomlDep $dep $tomlName)) }; $dep = $null; $sect = ''; continue }
-                if ($sect -eq 'mods' -and $l -match '^modId\s*=\s*"([^"]+)"') { $ids.Add($Matches[1]) }
-                if ($sect -eq 'dep' -and $l -match '^(modId|mandatory|type|side)\s*=\s*"?([^"#\s]+)"?') { $dep[$Matches[1]] = $Matches[2] }
+                if ($l -match '^\[') { . $endDep; . $endMod; $dep = $null; $mod = $null; $sect = '' }
+                if ($l -match '^\[\[\s*mods\s*\]\]') { $sect = 'mods'; $mod = @{}; continue }
+                if ($l -match '^\[\[\s*dependencies\.') { $sect = 'dep'; $dep = @{}; continue }
+                if ($l -match '^\[') { continue }
+                if ($sect -eq 'mods' -and $l -match '^(modId|version)\s*=\s*"([^"]+)"') { $mod[$Matches[1]] = $Matches[2] }
+                # A quoted value may hold spaces ("[1.20.1, 1.21)")
+                if ($sect -eq 'dep' -and $l -match '^(modId|mandatory|type|side|versionRange)\s*=\s*(?:"([^"]*)"|([^"#\s]+))') { $dep[$Matches[1]] = "$($Matches[2])$($Matches[3])" }
             }
-            if ($dep) { $deps.AddRange([string[]]@(Resolve-TomlDep $dep $tomlName)) }
+            . $endDep; . $endMod
         }
         elseif ($n -eq 'fabric.mod.json') {
             $sr = New-Object IO.StreamReader($e.Open()); $fj = $sr.ReadToEnd(); $sr.Dispose()
@@ -621,7 +651,51 @@ function Get-JarModInfo($zip, [string]$loader = 'forge') {
         }
     }
     if (-not $hasToml) { $deps.AddRange($fabricDeps) }
-    return @{ ids = @($ids); deps = @($deps); nested = @($nested) }
+    # "${file.jarVersion}" in mods.toml is filled in from the jar's manifest
+    if (@($versions.Values | Where-Object { $_ -like '*${*' }).Count) {
+        $iv = ''; $me = $zip.GetEntry('META-INF/MANIFEST.MF')
+        if ($me) { $sr = New-Object IO.StreamReader($me.Open()); if ($sr.ReadToEnd() -match '(?m)^Implementation-Version:\s*(\S+)') { $iv = $Matches[1] }; $sr.Dispose() }
+        foreach ($k in @($versions.Keys)) { if ($versions[$k] -like '*${*') { if ($iv) { $versions[$k] = $iv } else { $versions.Remove($k) } } }
+    }
+    return @{ ids = @($ids); deps = @($deps); nested = @($nested); ranges = $ranges; versions = $versions }
+}
+function Compare-ModVersion([string]$a, [string]$b) {
+    # Maven-style order (what Forge uses), close enough for mod versions: numbers compare as numbers, a missing part
+    # counts as 0, pre-release words ("3.0.0-beta.13") sort before the plain release and any other word
+    # ("3.6.6+1.20.1-forge") after it
+    $rank = { param($s) switch -Regex ($s) { '^(alpha|a)$' { 1 } '^(beta|b)$' { 2 } '^(milestone|m)$' { 3 } '^(rc|cr|pre)$' { 4 } '^snapshot$' { 5 } '^(ga|final|release)$' { 6 } '^sp$' { 7 } default { 8 } } }
+    $ta = @([regex]::Matches($a.ToLower(), '\d+|[a-z]+') | ForEach-Object { $_.Value })
+    $tb = @([regex]::Matches($b.ToLower(), '\d+|[a-z]+') | ForEach-Object { $_.Value })
+    for ($i = 0; $i -lt [Math]::Max($ta.Count, $tb.Count); $i++) {
+        $x = $(if ($i -lt $ta.Count) { $ta[$i] } else { $null }); $y = $(if ($i -lt $tb.Count) { $tb[$i] } else { $null })
+        $xn = $x -match '^\d+$'; $yn = $y -match '^\d+$'
+        if ($null -eq $x) { if ($yn) { if ([long]$y -ne 0) { return -1 } else { continue } } else { return [Math]::Sign(6 - (& $rank $y)) } }
+        if ($null -eq $y) { if ($xn) { if ([long]$x -ne 0) { return 1 } else { continue } } else { return [Math]::Sign((& $rank $x) - 6) } }
+        if ($xn -and $yn) { $c = ([long]$x).CompareTo([long]$y) } elseif ($xn) { $c = 1 } elseif ($yn) { $c = -1 }
+        else { $c = (& $rank $x) - (& $rank $y); if ($c -eq 0) { $c = [string]::CompareOrdinal($x, $y) } }
+        if ($c -ne 0) { return [Math]::Sign($c) }
+    }
+    return 0
+}
+function Test-VersionRange([string]$version, [string]$range) {
+    # Forge versionRange: "[2.1.34,2.2)", "[1.0,)", "[3.0]", several joined by commas; a bare "1.0" or "*" accepts anything
+    if (-not $range -or $range -eq '*' -or $range -notmatch '^[\[\(]') { return $true }
+    if (-not $version) { return $true }   # a jar that doesn't say its version can't be ruled out
+    foreach ($m in [regex]::Matches($range, '([\[\(])([^\[\]\(\)]*)([\]\)])')) {
+        $lo, $hi = $m.Groups[2].Value -split ',', 2
+        if ($null -eq $hi) { if ((Compare-ModVersion $version $lo.Trim()) -eq 0) { return $true } else { continue } }
+        $lo = $lo.Trim(); $hi = $hi.Trim(); $ok = $true
+        if ($lo) { $c = Compare-ModVersion $version $lo; if ($c -lt 0 -or ($c -eq 0 -and $m.Groups[1].Value -eq '(')) { $ok = $false } }
+        if ($hi) { $c = Compare-ModVersion $version $hi; if ($c -gt 0 -or ($c -eq 0 -and $m.Groups[3].Value -eq ')')) { $ok = $false } }
+        if ($ok) { return $true }
+    }
+    return $false
+}
+function Get-ModrinthCandidates([string]$proj, [string]$q) {
+    # Releases first, then betas, then alphas, newest first within each: a beta that breaks the range of a
+    # stable pack (watermedia 3.0 beta vs waterframes' [2.1.34,2.2)) is tried only after every release
+    try { $all = @(Invoke-RestMethod "https://api.modrinth.com/v2/project/$proj/version$q" | ForEach-Object { $_ }) } catch { return @() }
+    return @(foreach ($t in 'release', 'beta', 'alpha') { $all | Where-Object { $_.version_type -eq $t } })
 }
 function Resolve-TomlDep($dep, [string]$tomlName) {
     # Forge writes mandatory=true, NeoForge type="required" (or no type at all); server-only needs don't matter to the game
@@ -676,7 +750,7 @@ function Add-MissingClientDeps([string]$mods, $li) {
     $addedVersions = New-Object System.Collections.Generic.List[object]; $provided = @{}; $top = @{}
     $builtin = @{}; foreach ($b in 'minecraft', 'forge', 'neoforge', 'java', 'fabricloader', 'fabric', 'fabric-api', 'fabric-api-base', 'connectormod', 'mixinextras', 'fml', 'javafml') { $builtin[$b] = $true }
     for ($round = 1; $round -le 5; $round++) {
-        $provided = @{}; $top = @{}; $needs = @{}
+        $provided = @{}; $top = @{}; $needs = @{}; $rangeOf = @{}
         foreach ($jar in @(Get-ChildItem -LiteralPath $mods -Filter '*.jar' -File)) {
             $z = $null
             try {
@@ -685,6 +759,7 @@ function Add-MissingClientDeps([string]$mods, $li) {
                 foreach ($i in $r.ids) { $provided[$i] = $true; $top[$i] = $true }
                 foreach ($i in $r.nested) { $provided[$i] = $true }
                 foreach ($d in $r.deps) { if (-not $needs.ContainsKey($d)) { $needs[$d] = New-Object System.Collections.Generic.List[string] }; $needs[$d].Add($jar.FullName) }
+                foreach ($d in $r.ranges.Keys) { if (-not $rangeOf.ContainsKey($d)) { $rangeOf[$d] = New-Object System.Collections.Generic.List[string] }; $rangeOf[$d].Add($r.ranges[$d]) }
             }
             catch { }
             finally { if ($z) { $z.Dispose() } }
@@ -708,25 +783,38 @@ function Add-MissingClientDeps([string]$mods, $li) {
         catch { Info '(Modrinth에 물어보지 못했어요)'; return }
         $projects = @(foreach ($p in $vers.PSObject.Properties) { foreach ($d in @($p.Value.dependencies)) { if ($d.dependency_type -eq 'required' -and $d.project_id) { $d.project_id } } }) | Sort-Object -Unique
         $loaders = @($li.loader); if ($provided.ContainsKey('connectormod')) { $loaders += 'fabric' }
+        $q = '?loaders=' + [uri]::EscapeDataString((ConvertTo-Json -InputObject @($loaders) -Compress)) + '&game_versions=' + [uri]::EscapeDataString("[`"$($li.mc)`"]")
         foreach ($proj in $projects) {
             if (-not @($missing | Where-Object { -not $provided.ContainsKey($_) }).Count) { break }
-            $q = '?loaders=' + [uri]::EscapeDataString((ConvertTo-Json -InputObject @($loaders) -Compress)) + '&game_versions=' + [uri]::EscapeDataString("[`"$($li.mc)`"]")
-            try { $v = @(Invoke-RestMethod "https://api.modrinth.com/v2/project/$proj/version$q" | ForEach-Object { $_ }) | Select-Object -First 1 } catch { continue }
-            if (-not $v) { continue }
-            $f = $v.files | Where-Object primary | Select-Object -First 1; if (-not $f) { $f = $v.files[0] }
-            if ($f.filename -notmatch '^[A-Za-z0-9 ._+()\[\]-]+\.jar$' -or (Test-Path -LiteralPath (Join-Path $mods $f.filename))) { continue }
-            $tmpJar = Join-Path $mods "$($f.filename).check"
-            try { Get-Download $f.url $tmpJar -Sha1 $f.hashes.sha1 } catch { continue }
-            $z = $null; $gives = @()
-            try { $z = [IO.Compression.ZipFile]::OpenRead($tmpJar); $gives = @((Get-JarModInfo $z $li.loader).ids) } catch { } finally { if ($z) { $z.Dispose() } }
-            $hit = @($missing | Where-Object { $_ -in $gives })
-            if ($hit.Count) {
+            # The requiring mods' versionRange decides which version fits; the newest one may be too new
+            $tries = 0; $wanted = $null
+            foreach ($v in (Get-ModrinthCandidates $proj $q)) {
+                if ($tries -ge 5) { break }
+                # Once the project is known to provide an id, versions whose number plainly falls outside the range are skipped unseen
+                if ($wanted -and "$($v.version_number)" -match '^v?(\d+(\.\d+)+([-+][\w.]+)?)$') {
+                    $vn = $Matches[1]; if (@($rangeOf[$wanted] | Where-Object { -not (Test-VersionRange $vn $_) }).Count) { continue }
+                }
+                $f = $v.files | Where-Object primary | Select-Object -First 1; if (-not $f) { $f = $v.files[0] }
+                if ($f.filename -notmatch '^[A-Za-z0-9 ._+()\[\]-]+\.jar$' -or (Test-Path -LiteralPath (Join-Path $mods $f.filename))) { break }
+                $tmpJar = Join-Path $mods "$($f.filename).check"; $tries++
+                try { Get-Download $f.url $tmpJar -Sha1 $f.hashes.sha1 } catch { continue }
+                $z = $null; $jinfo = $null
+                try { $z = [IO.Compression.ZipFile]::OpenRead($tmpJar); $jinfo = Get-JarModInfo $z $li.loader } catch { } finally { if ($z) { $z.Dispose() } }
+                $gives = @(); if ($jinfo) { $gives = @($jinfo.ids) }
+                $hit = @($missing | Where-Object { $_ -in $gives })
+                if (-not $hit.Count) { Remove-Item -LiteralPath $tmpJar -Force -ErrorAction SilentlyContinue; break }   # not the provider at all
+                $bad = @($hit | Where-Object { $id = $_; $rangeOf.ContainsKey($id) -and @($rangeOf[$id] | Where-Object { -not (Test-VersionRange $jinfo.versions[$id] $_) }).Count })
+                if ($bad.Count) {
+                    Remove-Item -LiteralPath $tmpJar -Force -ErrorAction SilentlyContinue
+                    if ($rangeOf.ContainsKey($bad[0])) { $wanted = $bad[0] }
+                    continue
+                }
                 Move-Item -LiteralPath $tmpJar -Destination (Join-Path $mods $f.filename) -Force
                 foreach ($g in $gives) { $provided[$g] = $true; $top[$g] = $true }
                 Info "빠져 있던 필수 모드를 넣었어요: $($f.filename) ($($hit -join ', '))"
                 $addedVersions.Add($v); $found++
+                break
             }
-            else { Remove-Item -LiteralPath $tmpJar -Force -ErrorAction SilentlyContinue }
         }
         if (-not $found) {
             Info "필수 모드를 찾지 못했어요: $($missing -join ', ') (게임이 안 켜지면 이 이름을 도와줄 사람에게 알려 주세요)"
@@ -741,7 +829,7 @@ function Add-MissingClientDeps([string]$mods, $li) {
     $q = '?loaders=' + [uri]::EscapeDataString((ConvertTo-Json -InputObject @($loaders) -Compress)) + '&game_versions=' + [uri]::EscapeDataString("[`"$($li.mc)`"]")
     while ($queue.Count -and $seen.Count -lt 20) {
         $proj = $queue.Dequeue(); if ($seen.ContainsKey($proj)) { continue }; $seen[$proj] = $true
-        try { $v = @(Invoke-RestMethod "https://api.modrinth.com/v2/project/$proj/version$q" | ForEach-Object { $_ }) | Select-Object -First 1 } catch { continue }
+        $v = @(Get-ModrinthCandidates $proj $q) | Select-Object -First 1
         if (-not $v) { continue }
         $f = $v.files | Where-Object primary | Select-Object -First 1; if (-not $f) { $f = $v.files[0] }
         if ($f.filename -notmatch '^[A-Za-z0-9 ._+()\[\]-]+\.jar$' -or (Test-Path -LiteralPath (Join-Path $mods $f.filename))) { continue }
@@ -818,7 +906,7 @@ function Install-Client($pack) {
     }
     else { $verLabel = $VersionKey; $sigSrc = "$($pack.id)|$VersionKey|$AddedMods" }
     # Bumped whenever the way the game folder is built changes, so existing game folders get rebuilt once
-    $sigSrc = "build4|$sigSrc"
+    $sigSrc = "build5|$sigSrc"
     $sha = [Security.Cryptography.SHA256]::Create()
     $sig = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($sigSrc)) | ForEach-Object { $_.ToString('x2') })
 
@@ -835,8 +923,7 @@ function Install-Client($pack) {
             Copy-FriendMods $FromServer (Join-Path $script:tmp 'mods')
         }
         elseif ($host_) { $li = Get-ServerClient $FromServer $script:tmp }
-        # A friend installs CurseForge modpacks with CurseForge's own app (the manager shows how); files are not fetched for them here
-        elseif ($pack.source -eq 'curseforge') { throw 'CurseForge 모드팩은 CurseForge 앱으로 설치해요. [친구 서버 들어가기] 탭에서 [▶ 설치하고 게임 켜기]를 누르면 순서를 알려 줘요.' }
+        elseif ($pack.source -eq 'curseforge') { $li = Get-CurseForgeClient $pack $VersionKey $script:tmp }
         else { $ver = Get-ModrinthVersion $pack $VersionKey; $verLabel = $ver.version_number; $li = Get-ModrinthClient $ver $script:tmp }
         if ($li.version -notmatch '^[A-Za-z0-9._+-]+$' -or "$($li.mc)" -notmatch '^[0-9][0-9.]*$') { throw "모드팩 안의 버전 정보가 이상해요 (마인크래프트 '$($li.mc)', 로더 '$($li.version)')." }
         Get-AddedClientMods $AddedMods (Join-Path $script:tmp 'mods')
