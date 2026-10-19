@@ -1,11 +1,11 @@
 {
-    "version":  "1.0.19",
+    "version":  "1.0.20",
     "date":  "2026-10-19",
-    "notes":  "보이스 채팅(Simple Voice Chat)이 친구에게도 연결돼요. playit.gg에서 UDP 터널(127.0.0.1 / 24454)을 하나 더 만들고 친구랑 하기로 서버를 켜면 알아서 연결해요.",
+    "notes":  "보이스 채팅용 UDP 터널을 프로그램이 Playit에 알아서 만들어요. 친구랑 하기로 서버를 켜면 터널을 만들고 연결해요. 안 되면 콘솔에 이유와 방법이 나와요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "cb3a78bc0781d8d89febd04e3e94bfbd9cf68fd82221b5209fbea0b2bd72b359"
+                      "sha256":  "e4a585960f1a90634f414a103aaf907ca1a95ef89403d46d53272550929a97e8"
                   },
                   {
                       "path":  "install.ps1",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "1b4d0212a2f37e5735c5fa8686daa39fdb809706c3ebb69138f7062a6190f6d2"
+                      "sha256":  "eebd01ac71449a737a2b12e7da799670cbe66060b40fd91d2d6fd01aee31738c"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "a47fc7206793255017a386b704ce1076d01ed3b557afc85f1a1a407854b6a9fb"
+                      "sha256":  "034d4a51a95210cd8176c652120baff4b3fe8ce23416dcd6a14cd12c75aba0dd"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "b3bd899c815bfd2f04e116022b9ca9b63fcb6062fc810ce1cd74f8c1b662f26b"
+                     "sha256":  "4e247c1134aee5d64be6e1ead28ac15fe617a9a68d0ce9584a3c1b326d2013a2"
                  }
 }

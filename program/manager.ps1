@@ -1435,11 +1435,25 @@ function Sync-VoiceChat($d) {
         if ($l -match '^\s*voice_host\s*=\s*(.*)$') { $cur = $Matches[1].Trim() }
     }
     $key = Get-PlayitKey; if (-not $key) { return '' }
-    try { $res = Invoke-PlayitRundata $key } catch { return '' }
-    if ($res.status -ne 'success') { return '' }
-    $udp = @($res.data.tunnels | ForEach-Object { $_ } | Where-Object { $_ -and -not $_.disabled_reason -and "$($_.port_type)" -in 'udp', 'both' -and "$($_.tunnel_type)" -notmatch 'minecraft' })
+    $byHand = "playit.gg에서 터널을 하나 더 만드세요: 종류 UDP, 이 PC의 에이전트, 127.0.0.1 / $port. 만들고 나서 서버를 다시 켜면 알아서 연결해요."
+    $made = ''
+    for ($try = 0; $try -lt 6; $try++) {
+        try { $res = Invoke-PlayitRundata $key } catch { return '' }
+        if ($res.status -ne 'success') { return '' }
+        $udp = @($res.data.tunnels | ForEach-Object { $_ } | Where-Object { $_ -and -not $_.disabled_reason -and "$($_.port_type)" -in 'udp', 'both' -and "$($_.tunnel_type)" -notmatch 'minecraft' })
+        if ($udp.Count) { break }
+        $pending = @($res.data.pending | ForEach-Object { $_ } | Where-Object { $_ -and "$($_.port_type)" -in 'udp', 'both' })
+        if (-not $pending.Count -and -not $made) {
+            # No UDP tunnel yet: ask Playit to make one for this agent (the playit.gg page does the same)
+            $made = New-PlayitUdpTunnel $key ([string]$res.data.agent_id) $port
+            if ($made -ne 'ok') { return "[관리 프로그램] 보이스 채팅 모드가 있는데 UDP 터널을 자동으로 만들지 못했어요 ($made).`r`n[관리 프로그램] $byHand" }
+        }
+        Pump 2500   # a new tunnel takes a moment to get its address
+    }
     if (-not $udp.Count) {
-        return "[관리 프로그램] 보이스 채팅 모드가 있어요. 친구도 음성을 쓰려면 playit.gg에서 터널을 하나 더 만드세요: 종류 UDP, 이 PC의 에이전트, 127.0.0.1 / $port. 만들고 나서 서버를 다시 켜면 알아서 연결해요."
+        if ($made -eq 'ok') { return "[관리 프로그램] 보이스 채팅용 UDP 터널을 만들었어요. 주소가 아직 준비 중이라, 서버를 한 번 더 껐다 켜면 친구도 음성으로 연결돼요." }
+        if ($pending.Count) { return "[관리 프로그램] 보이스 채팅용 UDP 터널이 Playit에서 준비 중이에요. 서버를 한 번 더 껐다 켜면 친구도 음성으로 연결돼요." }
+        return "[관리 프로그램] 보이스 채팅 모드가 있어요. 친구도 음성을 쓰려면 $byHand"
     }
     # The tunnel pointed at the voice port, or else the only UDP tunnel there is
     $t = $udp | Where-Object { @($_.agent_config.fields | Where-Object { "$($_.value)" -match "(^|:)$port$" }).Count } | Select-Object -First 1
@@ -1454,6 +1468,28 @@ function Sync-VoiceChat($d) {
     New-Item -ItemType Directory -Force (Split-Path $cfg -Parent) | Out-Null
     [IO.File]::WriteAllLines($cfg, [string[]]$out, $latin1)
     return "[관리 프로그램] 보이스 채팅을 Playit UDP 터널($a)에 연결했어요. 친구도 음성으로 이야기할 수 있어요. (V 키로 마이크를 골라요)"
+}
+function New-PlayitUdpTunnel([string]$key, [string]$agentId, [int]$port) {
+    # POST /tunnels/create (playit-agent api_client ReqTunnelsCreate). Returns 'ok' or why not, in words for the host.
+    # A refusal for good (unverified e-mail, no permission) is remembered for a day, so every start doesn't ask again.
+    $memo = Join-Path $PlayitDir 'voice-tunnel.json'
+    $m = Read-Json $memo
+    if ($m -and $m.until -and [datetime]::Now -lt [datetime]::Parse([string]$m.until)) { return [string]$m.why }
+    if ($agentId -notmatch '^[0-9a-fA-F-]{36}$') { return '에이전트 정보를 받지 못했어요' }
+    $body = [ordered]@{ name = 'mcsm-voice'; tunnel_type = $null; port_type = 'udp'; port_count = 1
+        origin = [ordered]@{ type = 'agent'; data = [ordered]@{ agent_id = $agentId; local_ip = '127.0.0.1'; local_port = $port } }
+        enabled = $true; alloc = $null; firewall_id = $null; proxy_protocol = $null } | ConvertTo-Json -Depth 5 -Compress
+    $text = ''
+    try { $r = Invoke-RestMethod -Method Post -Uri 'https://api.playit.gg/tunnels/create' -Headers @{ Authorization = "Agent-Key $key" } -ContentType 'application/json' -Body $body -TimeoutSec 10; if ($r.status -eq 'success') { Remove-Item -LiteralPath $memo -Force -ErrorAction SilentlyContinue; return 'ok' }; $text = ($r | ConvertTo-Json -Depth 5 -Compress) }
+    catch { $text = "$($_.ErrorDetails.Message) $($_.Exception.Message)" }
+    $why = 'Playit이 거절했어요'; $lasting = $false
+    if ($text -match 'RequiresVerifiedAccount') { $why = 'playit.gg 계정의 이메일 인증이 먼저 필요해요. playit.gg 위쪽 빨간 줄의 [Click here to verify]를 눌러 인증하세요'; $lasting = $true }
+    elseif ($text -match 'Unauthorized|NotAuthorized|AuthRequired|InvalidAgentKey|401|403') { $why = '이 키로는 터널을 만들 수 없대요'; $lasting = $true }
+    elseif ($text -match 'Limit|NotEnough|NoPorts|Premium|PortAllocNotFound') { $why = '무료 계정에서 만들 수 있는 터널 수를 넘었을 수 있어요'; $lasting = $true }
+    elseif ($text -match 'AgentVersionTooOld') { $why = 'Playit 프로그램이 오래돼서 UDP 터널을 못 받아요'; $lasting = $true }
+    elseif ($text -match 'timed out|Unable to connect|could not be resolved') { $why = 'Playit에 연결하지 못했어요' }
+    if ($lasting) { try { [IO.File]::WriteAllText($memo, (ConvertTo-Json -InputObject ([ordered]@{ until = [datetime]::Now.AddDays(1).ToString('o'); why = $why; detail = $text.Substring(0, [Math]::Min(300, $text.Length)) })), $Utf8) } catch { } }
+    return $why
 }
 function Find-PlayitAddressInLog {
     # Playit prints the tunnel address when it connects; joinmc.link / ply.gg are its public tunnel domains
