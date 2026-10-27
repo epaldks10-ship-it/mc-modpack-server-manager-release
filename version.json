@@ -1,15 +1,15 @@
 {
-    "version":  "1.0.22",
+    "version":  "1.0.23",
     "date":  "2026-10-27",
-    "notes":  "모드가 더 높은 Forge 버전을 필요로 해서 서버가 안 켜지면, Forge를 올리고 다시 켤지 물어봐요. 모드를 추가할 때도 바로 확인해요. 친구 게임도 [▶ 게임 켜기]를 누르면 같은 버전으로 맞춰요.",
+    "notes":  "Forge를 올리기 직전에 월드를 자동으로 백업해요. 게임이 모드들이 동시에 켜지다 부딪힌 우연한 오류로 멈췄을 때는 게임을 다시 만들지 않고, 다시 켜면 된다고 알려 줘요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "d0cbeaaacc8f1fa051e1634adacd8186c878184f0d0c464b25ecac9b2c88dd94"
+                      "sha256":  "049565c9ab411cb44be4e8ab3c5832cc3cdfb6e7e253dc60f5991b73330bcf15"
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "7dccb151013e114f84e3eac7488c7c50842ef8b65aebf5ddc11cbba46f706dc6"
+                      "sha256":  "469ebf5debcecfd5f51a3da4d3e246f9fccf5cfed004bf28ff9e09896c45ce37"
                   },
                   {
                       "path":  "packs.json",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "86a0894942d9ebf78724aa8e63bcb15bd2688e8c9989cfef587cd7e4683c06e9"
+                      "sha256":  "5f4ed4a300dc9478b9fc3456dff3f9a0c7ea409ed4b1e5a6454b57335dc419b5"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "9c6725b979531ebbecf7b78b6c05def2cb45f9bdb12d2141433d2094594554f4"
+                      "sha256":  "fb422c3a80181b0ddaa4c7ff6e4a8d523ddecfe6df94de8d86fe3202521e93d5"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "e0a0d93c07c12b4a03645d0901ea1e2512e8facd1a2a1ead40a7a369631c02cc"
+                     "sha256":  "83975b26a7bf350b845e5ed718de9f6c54c3d97563e570fdfe0db0e7eb40a272"
                  }
 }

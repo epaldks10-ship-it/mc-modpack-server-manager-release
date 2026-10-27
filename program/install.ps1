@@ -1110,6 +1110,10 @@ function Get-ModCrash([string]$gd, $old) {
         $c.failed += @{ file = (($m.Groups[1].Value -split '[\\/]')[-1]); cls = $cls }
     }
     if (-not $c.needs.Count -and -not $c.failed.Count) { return $null }
+    # Mods registering at the same moment on parallel threads and colliding (Architectury's registry:
+    # ConcurrentModificationException): bad timing, not a broken mod. Starting again fixes it; rebuilding can't.
+    $ex = @([regex]::Matches($text, '(?m)^\s*Exception message:\s*([^\r\n]+)') | ForEach-Object { $_.Groups[1].Value })
+    if (-not $c.needs.Count -and $ex.Count -and -not @($ex | Where-Object { $_ -notmatch 'java\.util\.ConcurrentModificationException' }).Count) { $c.transient = $true }
     return $c
 }
 function Get-ChannelMismatch([string]$gd, $old, [datetime]$since) {
@@ -1323,7 +1327,11 @@ function Install-Client($pack) {
     $sig = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($sigSrc)) | ForEach-Object { $_.ToString('x2') })
 
     # The game stopped at "Error loading mods" since the last setup: build it again and fix what the report names
-    $crash = Get-ModCrash $gd $old
+    $crash = Get-ModCrash $gd $old; $transient = ''
+    if ($crash -and $crash.transient) {
+        Info "지난번에 게임이 멈춘 건 모드들이 동시에 켜지다 부딪힌 우연한 오류예요. ($($crash.file)) 고칠 건 없어서 그대로 다시 켜요."
+        $transient = $crash.file; $crash = $null
+    }
     if ($crash -and $crash.channels) { Info "지난번에 서버와 모드가 달라서 접속이 막혔어요. 맞춰서 다시 준비할게요." }
     elseif ($crash) { Info "지난번에 게임이 모드 오류로 멈췄어요. 원인을 고쳐서 다시 준비할게요. ($($crash.file))" }
     $offList = @(); if ($old -and $old.PSObject.Properties['disabled']) { $offList = @($old.disabled | Where-Object { $_ }) }
@@ -1405,7 +1413,7 @@ function Install-Client($pack) {
         kind = $(if ($host_) { 'host' } else { 'friend' }); name = $Name; pack = $pack.id; packName = $pack.name; version = $verLabel; versionKey = $VersionKey
         versionId = $vid; loader = $li.loader; loaderVersion = $li.version; loaderMin = $LoaderMin; mc = $li.mc; address = $Address; addedMods = $AddedMods; addedPacks = $AddedPacks
         profile = $profKey; profileName = $label; serverEntry = $entry; sig = $sig; light = [bool]$light; ramGB = $GameRamGB; installed = (Get-Date -Format 'yyyy-MM-dd HH:mm')
-        installedAt = (Get-Date).ToString('o'); crashFixed = $(if ($crash) { $crash.file } elseif ($old -and $old.PSObject.Properties['crashFixed']) { $old.crashFixed } else { '' }); disabled = @($offList); packsOn = @($packsOn)
+        installedAt = (Get-Date).ToString('o'); crashFixed = $(if ($crash) { $crash.file } elseif ($transient) { $transient } elseif ($old -and $old.PSObject.Properties['crashFixed']) { $old.crashFixed } else { '' }); transientCrash = $transient; disabled = @($offList); packsOn = @($packsOn)
     } | ConvertTo-Json | Set-Content -LiteralPath $markerFile -Encoding UTF8
     Write-Host ''
     Write-Host '==================================================' -ForegroundColor Green

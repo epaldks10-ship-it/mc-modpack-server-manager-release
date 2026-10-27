@@ -1073,6 +1073,16 @@ function Start-LoaderJob($d, [string]$ver, [bool]$restart, [bool]$local) {
     # install.ps1 -SetLoader puts the new loader into the server folder; $restart starts the server again when it worked
     if ($script:installProc) { Show-Msg '다른 설치나 업데이트가 진행 중이에요. 끝난 다음에 다시 해 주세요.'; return $false }
     $i = Read-Json (Join-Path $d 'server-info.json')
+    # The world first, so nothing about the change can cost it (same "before-..." backups as a restore or a reset)
+    $w = Get-LevelDir $d
+    if (Test-Path -LiteralPath (Join-Path $w 'level.dat')) {
+        if (-not (Test-BackupSpace $d $w)) { Show-Msg "디스크 공간이 모자라서 월드를 백업할 수 없어요. 그래서 $(Get-LoaderName $i.loader)를 올리지 않았어요.`n오래된 백업이나 servers_old 폴더를 지워서 공간을 만든 다음 다시 해 주세요." 'Warning'; return $false }
+        $lblStage.Text = "$(Get-LoaderName $i.loader)를 올리기 전에 월드를 백업하는 중이에요..."; [Windows.Forms.Application]::DoEvents()
+        $zip = New-WorldBackup $d 'before-forge'
+        if (-not $zip) { $lblStage.Text = ''; Show-Msg "월드를 백업하지 못해서 $(Get-LoaderName $i.loader)를 올리지 않았어요.`n[백업 / 월드 관리] → [지금 백업하기]가 되는지 확인해 주세요." 'Warning'; return $false }
+        $txtConsole.AppendText("`r`n[관리 프로그램] $(Get-LoaderName $i.loader)를 올리기 전에 월드를 백업했어요: $(Split-Path $zip -Leaf)`r`n")
+        Copy-BackupOut $d $zip
+    }
     $script:loaderJob = @{ dir = $d; ver = $ver; name = (Get-LoaderName $i.loader); restart = $restart; local = $local }
     $txtConsole.AppendText("`r`n[관리 프로그램] $(Get-LoaderName $i.loader)를 $ver(으)로 올리는 중이에요. 몇 분 걸릴 수 있어요.`r`n")
     Start-InstallJob "-PackId `"$($i.pack)`" -VersionKey `"$($i.version)`" -Name `"$(Split-Path $d -Leaf)`" -SetLoader $ver" 'loader'
@@ -1128,7 +1138,7 @@ function Complete-Server {
             return
         }
         if (Ask-YesNo ("$what 이(가) $ln $($need.min) 이상을 필요로 해서 서버가 안 켜졌어요.`n지금 이 서버는 $ln $($i.loaderVersion)이에요.`n`n" +
-                "$($ln)를 $ver(으)로 올리고 다시 켤까요? (추천)`n- 월드와 모드, 설정은 그대로예요.`n- 친구 PC는 [▶ 게임 켜기]를 누르면 알아서 같은 버전으로 맞춰요.")) {
+                "$($ln)를 $ver(으)로 올리고 다시 켤까요? (추천)`n- 올리기 전에 월드를 자동으로 백업해요.`n- 월드와 모드, 설정은 그대로예요.`n- 친구 PC는 [▶ 게임 켜기]를 누르면 알아서 같은 버전으로 맞춰요.")) {
             [void](Start-LoaderJob $s.dir $ver $true $s.local)
         }
         return
@@ -1959,7 +1969,7 @@ function Confirm-ModLoader($d, $files, $log) {
         return
     }
     if (Ask-YesNo ("$what 은(는) $ln $need 이(가) 필요해요. 이 서버는 $ln $($i.loaderVersion)이에요.`n`n" +
-            "$($ln)를 $ver(으)로 올릴까요? (추천)`n- 월드와 다른 모드, 설정은 그대로예요.`n- 친구 PC는 [▶ 게임 켜기]를 누르면 알아서 같은 버전으로 맞춰요.`n`n" +
+            "$($ln)를 $ver(으)로 올릴까요? (추천)`n- 올리기 전에 월드를 자동으로 백업해요.`n- 월드와 다른 모드, 설정은 그대로예요.`n- 친구 PC는 [▶ 게임 켜기]를 누르면 알아서 같은 버전으로 맞춰요.`n`n" +
             "[아니요]를 누르면 이 모드를 다시 빼요. ($($ln)가 낮으면 서버가 안 켜져요)")) {
         if (Start-LoaderJob $d $ver $false $false) { $log.Invoke("$($ln)를 $ver(으)로 올리는 중이에요. 진행 상황은 [내 서버] 화면에 나와요. 끝날 때까지 서버를 켜지 마세요.") }
         return
@@ -3214,6 +3224,7 @@ function Complete-GameJob([bool]$ok) {
         if (-not $script:srv) { $steps += "`n`n※ 지금 서버가 꺼져 있어요. 게임이 켜지는 동안 [▶ 친구랑 하기] 또는 [▶ 혼자 하기]로 서버도 켜 주세요." }
     }
     else { $lblJoinWork.ForeColor = [Drawing.Color]::DarkGreen; $lblJoinWork.Text = "준비 완료! 런처에서 '$($m.profileName)' → [플레이] → 멀티플레이 → '$($m.serverEntry)'"; Update-JoinedList }
+    if ($m.PSObject.Properties['transientCrash'] -and $m.transientCrash) { $steps += "`n`n※ 지난번에 게임이 멈춘 건 모드들이 동시에 켜지다 부딪힌 우연한 오류였어요. 고칠 건 없어서 게임은 그대로 두었어요. 다시 켜면 돼요." }
     if ([int]$m.ramGB -lt 4) { $steps += "`n`n※ 이 컴퓨터 램이 넉넉하지 않아서 게임 램을 $($m.ramGB)GB로 잡았어요. 버벅이면 다른 프로그램을 닫아 주세요." }
     Show-Msg "게임 준비가 끝났어요!`n`n$steps"
 }
