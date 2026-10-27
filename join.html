@@ -121,6 +121,7 @@
       <p>앱에서 모드팩 <b id="mPack">-</b>을(를) 검색해서 버전 <b id="mVer">-</b>(으)로 설치해요.</p>
       <div class="row"><a class="btn secondary hidden" id="mPage" target="_blank" rel="noopener">모드팩 공식 페이지 열기</a></div>
       <small>버전이 다르면 접속이 안 돼요.</small>
+      <p class="hidden" id="mLoader">방장 서버는 <b id="mLoaderName">Forge</b> <b id="mLoaderVer">-</b>을(를) 써요. 모드팩 기본값보다 높아서, 설치한 뒤 앱의 모드팩 설정에서 <span id="mLoaderName2">Forge</span> 버전을 <b id="mLoaderVer2">-</b>(으)로 바꿔야 게임이 켜져요.</p>
     </div></div>
     <div class="step hidden" id="mModsStep"><div class="num">3</div><div>
       <p><b>방장이 추가한 모드를 넣어요.</b> 각 링크에서 이 마인크래프트 버전에 맞는 <code>.jar</code> 파일을 받아서, <b>게임을 끈 상태에서</b> 모드팩의 <code>mods</code> 폴더에 넣어요.</p>
@@ -239,6 +240,13 @@
     else if (mr) { $("mAppName").textContent = "Modrinth 앱"; show("mMrApp"); }
     else { $("mAppName").textContent = "CurseForge 앱이나 Modrinth 앱"; show("mCfApp"); show("mMrApp"); }
     if (pack.page && URL_OK.test(pack.page)) { $("mPage").href = pack.page; show("mPage"); }
+    // The host raised the server's Forge/NeoForge for a mod that needs it; the app installs the pack's own one
+    var fv = (typeof c.fv === "string" && /^[0-9][0-9A-Za-z._+-]{0,31}$/.test(c.fv)) ? c.fv : "";
+    if (fv) {
+      var ln = c.fl === "neoforge" ? "NeoForge" : "Forge";
+      $("mLoaderName").textContent = ln; $("mLoaderName2").textContent = ln; $("mLoaderVer").textContent = fv; $("mLoaderVer2").textContent = fv;
+      show("mLoader");
+    }
     // Modrinth versions travel as an id; the page shows its name
     if (mr && /^[A-Za-z0-9]{8}$/.test(c.k)) {
       fetch("https://api.modrinth.com/v2/version/" + c.k).then(function (r) { return r.json(); })
@@ -255,12 +263,13 @@
     try {
       var key = "mcsm-last-" + String(c.n || "");
       var prev = JSON.parse(localStorage.getItem(key) || "null");
-      var now = { k: String(c.k), m: mods.map(function (x) { return { p: x.p, f: String(x.f) }; }), l: links.map(function (x) { return { t: String(x.t || "모드"), u: x.u }; }) };
+      var now = { k: String(c.k), fv: fv, m: mods.map(function (x) { return { p: x.p, f: String(x.f) }; }), l: links.map(function (x) { return { t: String(x.t || "모드"), u: x.u }; }) };
       if (prev && Array.isArray(prev.m) && Array.isArray(prev.l)) {
         var had = {}, has = {};
         prev.m.forEach(function (x) { had["m:" + x.f] = x; }); prev.l.forEach(function (x) { had["l:" + x.u] = x; });
         now.m.forEach(function (x) { has["m:" + x.f] = x; }); now.l.forEach(function (x) { has["l:" + x.u] = x; });
         var items = 0;
+        if ((prev.fv || "") !== now.fv && now.fv) { var lf = document.createElement("li"); lf.textContent = "방장이 서버의 모드 로더를 " + now.fv + "(으)로 올렸어요. 앱의 모드팩 설정에서 같은 버전으로 바꿔 주세요."; $("chList").appendChild(lf); items++; }
         if (prev.k !== now.k) { var li = document.createElement("li"); li.textContent = "모드팩 버전이 바뀌었어요: " + prev.k + " → " + now.k + " (앱에서 모드팩을 새 버전으로 업데이트해 주세요)"; $("chList").appendChild(li); items++; }
         Object.keys(has).forEach(function (k) {
           if (had[k]) return;

@@ -139,6 +139,8 @@ $PlayitLog = Join-Path $PlayitDir 'playit.log'
 $PlayitAddrFile = Join-Path $PlayitDir 'address.txt'          # the address friends type in; not a secret
 $Cp949 = [Text.Encoding]::GetEncoding(949)
 $Utf8 = New-Object Text.UTF8Encoding($false)
+# Forge/NeoForge versions that may go into install.ps1's command line (same rule as install.ps1)
+$LoaderVersionPattern = '^[0-9][0-9A-Za-z._+-]{0,31}$'
 New-Item -ItemType Directory -Force $ServersDir | Out-Null
 
 # ---------------- program self-update from the public release repo ----------------
@@ -539,16 +541,17 @@ $installTimer.Add_Tick({
         if ($sb.Length) {
             if ($kind -eq 'join') { $txtJoinLog.AppendText($sb.ToString()) }
             elseif ($kind -eq 'game') { if (-not $script:srv) { $txtConsole.AppendText($sb.ToString()) } }
-            else { $txtInstallLog.AppendText($sb.ToString()) }
-            if ($kind -eq 'update') { $txtConsole.AppendText($sb.ToString()) }
+            elseif ($kind -ne 'loader') { $txtInstallLog.AppendText($sb.ToString()) }
+            if ($kind -in 'update', 'loader') { $txtConsole.AppendText($sb.ToString()) }
         }
         $head = '설치 중이에요. 프로그램을 닫지 마세요.'; if ($kind -eq 'update') { $head = '모드팩 업데이트 중이에요. 프로그램을 닫지 마세요.' }
         if ($kind -in 'game', 'join') { $head = '게임 준비 중이에요. (처음엔 몇 분 걸려요)' }
+        if ($kind -eq 'loader') { $head = 'Forge를 바꾸는 중이에요. 프로그램을 닫지 마세요.'; if ($script:loaderJob) { $head = "$($script:loaderJob.name)를 바꾸는 중이에요. 프로그램을 닫지 마세요." } }
         if ($p.Running) {
             if ($kind -eq 'join') { $lblJoinWork.Text = "$head`n$($script:installLast)" }
             elseif ($kind -eq 'game') { $lblStage.Text = "$head  $($script:installLast)" }
-            else { $lblWork.Text = "$head`n$($script:installLast)" }
-            if ($kind -eq 'update') { $lblStage.Text = "$head  $($script:installLast)" }
+            elseif ($kind -ne 'loader') { $lblWork.Text = "$head`n$($script:installLast)" }
+            if ($kind -in 'update', 'loader') { $lblStage.Text = "$head  $($script:installLast)" }
             return
         }
         if (-not $p.Lines.IsEmpty) { return }
@@ -561,6 +564,7 @@ $installTimer.Add_Tick({
         $script:updCache = @{}
         $btnPlay.Enabled = $true; $btnJoin.Enabled = $true; $btnJoinAgain.Enabled = $true
         if ($kind -in 'game', 'join') { Complete-GameJob $ok; return }
+        if ($kind -eq 'loader') { Complete-LoaderJob $ok; return }
         if ($script:jobKind -eq 'update') {
             if ($ok) { $lblStage.Text = '모드팩 업데이트가 끝났어요. 친구들에게도 새 버전으로 업데이트하라고 알려 주세요.'; $lblWork.Text = '' }
             else { $lblStage.Text = "업데이트에 실패했어요. 서버는 예전 버전 그대로예요. 이유: $($script:installErr)" }
@@ -598,13 +602,14 @@ function Start-InstallJob([string]$installArgs, [string]$kind) {
     $script:jobKind = $kind; $script:installLast = ''; $script:installErr = '(아래 기록을 확인하세요)'
     $script:statusFile = Join-Path $env:TEMP "mcserver-install-$([guid]::NewGuid().ToString('N')).txt"
     $argLine = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $Prog 'install.ps1')`" $installArgs -StatusFile `"$script:statusFile`" -NoPause"
-    if ($kind -eq 'join') { $txtJoinLog.Clear() } elseif ($kind -ne 'game') { $txtInstallLog.Clear() }
+    if ($kind -eq 'join') { $txtJoinLog.Clear() } elseif ($kind -notin 'game', 'loader') { $txtInstallLog.Clear() }
     if ($kind -eq 'update' -or ($kind -eq 'game' -and -not $script:srv)) { $txtConsole.Clear() }
     $script:installProc = New-Object McProc('powershell.exe', $argLine, $Prog, [Text.Encoding]::Default.CodePage)
     $btnInstall.Enabled = $false; $btnUpdate.Enabled = $false; $btnStart.Enabled = $false; $btnLocal.Enabled = $false
     $btnPlay.Enabled = $false; $btnJoin.Enabled = $false; $btnJoinAgain.Enabled = $false
     if ($kind -eq 'join') { $lblJoinWork.ForeColor = [Drawing.Color]::DarkGreen; $lblJoinWork.Text = '준비 중...' }
     elseif ($kind -eq 'game') { $lblStage.Text = '게임 준비 중...' }
+    elseif ($kind -eq 'loader') { $lblStage.Text = '준비 중...' }
     else { $lblWork.ForeColor = [Drawing.Color]::DarkGreen; $lblWork.Text = '준비 중...' }
     $installTimer.Start()
 }
@@ -948,17 +953,138 @@ function Stop-Server([switch]$NoAsk) {
     Set-State '● 끄는 중...  (월드를 저장하고 있어요)' ([Drawing.Color]::SlateGray)
 }
 
+function Get-CrashText($s) {
+    # The server's last lines plus the crash report this run wrote, if any (not one left by an earlier start)
+    $text = $s.tail -join "`n"
+    $since = (Get-Date).AddMinutes(-5); if ($s.PSObject.Properties['sw'] -and $s.sw) { $since = (Get-Date) - $s.sw.Elapsed - [TimeSpan]::FromSeconds(5) }
+    $cr = Get-ChildItem -LiteralPath (Join-Path $s.dir 'crash-reports') -Filter '*.txt' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $since } | Sort-Object LastWriteTime | Select-Object -Last 1
+    if ($cr) { $text += "`n" + [IO.File]::ReadAllText($cr.FullName) }
+    return $text
+}
 function Find-CulpritMod($s) {
     # A client-only mod on a server shows up as "Mod File: .../mods/x.jar" next to a client-class error.
     # Other failures (a missing dependency, a broken config) also list mod files; parking those would make things worse.
-    $text = $s.tail -join "`n"
-    $cr = Get-ChildItem -LiteralPath (Join-Path $s.dir 'crash-reports') -Filter '*.txt' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddMinutes(-5) } | Sort-Object LastWriteTime | Select-Object -Last 1
-    if ($cr) { $text += "`n" + [IO.File]::ReadAllText($cr.FullName) }
+    $text = Get-CrashText $s
     if ($text -notmatch 'invalid dist|net[/.]minecraft[/.]client[/.]') { return $null }
     $m = [regex]::Match($text, 'Mod File:\s*/?(?<p>[^\r\n]+?\.jar)')
     if (-not $m.Success) { return $null }
     $jar = Join-Path (Join-Path $s.dir 'mods') (Split-Path ($m.Groups['p'].Value -replace '/', '\') -Leaf)
     if (Test-Path -LiteralPath $jar) { return $jar } return $null
+}
+
+# ---------------- Forge/NeoForge newer than the pack's, for a mod that needs it ----------------
+function Compare-ModVersion([string]$a, [string]$b) {
+    # Same as install.ps1: Maven-style order (what Forge uses), numbers compare as numbers, a missing part counts as 0,
+    # pre-release words ("3.0.0-beta.13") sort before the plain release and any other word after it
+    $rank = { param($s) switch -Regex ($s) { '^(alpha|a)$' { 1 } '^(beta|b)$' { 2 } '^(milestone|m)$' { 3 } '^(rc|cr|pre)$' { 4 } '^snapshot$' { 5 } '^(ga|final|release)$' { 6 } '^sp$' { 7 } default { 8 } } }
+    $ta = @([regex]::Matches($a.ToLower(), '\d+|[a-z]+') | ForEach-Object { $_.Value })
+    $tb = @([regex]::Matches($b.ToLower(), '\d+|[a-z]+') | ForEach-Object { $_.Value })
+    for ($i = 0; $i -lt [Math]::Max($ta.Count, $tb.Count); $i++) {
+        $x = $(if ($i -lt $ta.Count) { $ta[$i] } else { $null }); $y = $(if ($i -lt $tb.Count) { $tb[$i] } else { $null })
+        $xn = $x -match '^\d+$'; $yn = $y -match '^\d+$'
+        if ($null -eq $x) { if ($yn) { if ([long]$y -ne 0) { return -1 } else { continue } } else { return [Math]::Sign(6 - (& $rank $y)) } }
+        if ($null -eq $y) { if ($xn) { if ([long]$x -ne 0) { return 1 } else { continue } } else { return [Math]::Sign((& $rank $x) - 6) } }
+        if ($xn -and $yn) { $c = ([long]$x).CompareTo([long]$y) } elseif ($xn) { $c = 1 } elseif ($yn) { $c = -1 }
+        else { $c = (& $rank $x) - (& $rank $y); if ($c -eq 0) { $c = [string]::CompareOrdinal($x, $y) } }
+        if ($c -ne 0) { return [Math]::Sign($c) }
+    }
+    return 0
+}
+function Test-VersionRange([string]$version, [string]$range) {
+    # Same as install.ps1: "[47.4.10,)", "[1.0,2.0)", "[3.0]", several joined by commas; a bare "1.0" or "*" accepts anything
+    if (-not $range -or $range -eq '*' -or $range -notmatch '^[\[\(]') { return $true }
+    if (-not $version) { return $true }
+    foreach ($m in [regex]::Matches($range, '([\[\(])([^\[\]\(\)]*)([\]\)])')) {
+        $lo, $hi = $m.Groups[2].Value -split ',', 2
+        if ($null -eq $hi) { if ((Compare-ModVersion $version $lo.Trim()) -eq 0) { return $true } else { continue } }
+        $lo = $lo.Trim(); $hi = $hi.Trim(); $ok = $true
+        if ($lo) { $c = Compare-ModVersion $version $lo; if ($c -lt 0 -or ($c -eq 0 -and $m.Groups[1].Value -eq '(')) { $ok = $false } }
+        if ($hi) { $c = Compare-ModVersion $version $hi; if ($c -gt 0 -or ($c -eq 0 -and $m.Groups[3].Value -eq ')')) { $ok = $false } }
+        if ($ok) { return $true }
+    }
+    return $false
+}
+function Format-VersionRange([string]$range) {
+    # "[47.4.10,)" -> "47.4.10 이상" for the messages; anything fancier is shown as it is
+    if ($range -match '^\[\s*([^,\]\s]+)\s*,\s*\)$') { return "$($Matches[1]) 이상" }
+    if ($range -match '^\[\s*([^,\]\s]+)\s*,\s*([^,\)\s]+)\s*\)$') { return "$($Matches[1]) 이상 $($Matches[2]) 미만" }
+    return $range
+}
+function Get-LoaderName([string]$loader) { if ($loader -eq 'neoforge') { return 'NeoForge' } return 'Forge' }
+function Get-NeoForgeMc([string]$v) {
+    # Same as install.ps1: NeoForge 21.1.x -> MC 1.21.1, 20.4.x -> 1.20.4, 21.0.x -> 1.21
+    $p = $v.Split('.')
+    if ([int]$p[0] -ge 26) { return "$($p[0]).$($p[1])" }
+    if ($p[1] -eq '0') { return "1.$($p[0])" }
+    return "1.$($p[0]).$($p[1])"
+}
+function Get-JarLoaderRanges([string]$jar, [string]$loader) {
+    # The versionRanges a mod's mods.toml asks of forge / neoforge ("[47.4.10,)"); none when it says nothing
+    $z = $null; $out = @()
+    try {
+        $z = [IO.Compression.ZipFile]::OpenRead($jar)
+        $e = $null; if ($loader -eq 'neoforge') { $e = $z.GetEntry('META-INF/neoforge.mods.toml') }
+        if (-not $e) { $e = $z.GetEntry('META-INF/mods.toml') }
+        if (-not $e) { return @() }
+        $sr = New-Object IO.StreamReader($e.Open()); $toml = $sr.ReadToEnd(); $sr.Dispose()
+        $dep = $null
+        foreach ($ln in @($toml -split "`n") + '[end]') {
+            $l = $ln.Trim()
+            if ($l -match '^\[') {
+                if ($dep -and $dep['modId'] -eq $loader -and $dep['versionRange']) { $out += $dep['versionRange'] }
+                $dep = $null; if ($l -match '^\[\[\s*dependencies\.') { $dep = @{} }
+                continue
+            }
+            if ($dep -and $l -match '^(modId|versionRange)\s*=\s*"([^"]*)"') { $dep[$Matches[1]] = $Matches[2] }
+        }
+    }
+    catch { }
+    finally { if ($z) { $z.Dispose() } }
+    return $out
+}
+function Find-LoaderVersion([string]$loader, [string]$mc, [string]$current, $ranges) {
+    # The lowest released Forge/NeoForge for this Minecraft version that every range accepts and is not older than
+    # the current one (the smallest step away from what the pack was made with). $null: there is none. Throws offline.
+    if ($loader -eq 'forge') {
+        $xml = [Text.Encoding]::UTF8.GetString((Get-WebBytes 'https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml' 20000))
+        $all = @([regex]::Matches($xml, "<version>$([regex]::Escape($mc))-([0-9][0-9.]*)</version>") | ForEach-Object { $_.Groups[1].Value })
+    }
+    else { $all = @((Invoke-Api 'https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge' 20).versions | Where-Object { $_ -match '^\d+\.\d+\.' -and (Get-NeoForgeMc $_) -eq $mc }) }
+    $fit = @($all | Where-Object { $v = $_; $v -match $LoaderVersionPattern -and (Compare-ModVersion $v $current) -ge 0 -and -not @($ranges | Where-Object { -not (Test-VersionRange $v $_) }).Count })
+    # Releases before betas
+    $pick = @($fit | Where-Object { $_ -notmatch '(?i)beta|alpha' }); if (-not $pick.Count) { $pick = $fit }
+    $best = $null; foreach ($v in $pick) { if (-not $best -or (Compare-ModVersion $v $best) -lt 0) { $best = $v } }
+    return $best
+}
+function Find-LoaderNeed($s) {
+    # "Mod chiikawa requires forge 47.4.10 or above / Currently, forge is 47.4.0": the mods and the version they need
+    $text = Get-CrashText $s
+    $ms = @([regex]::Matches($text, '(?i)Mod (\S+) requires (forge|neoforge) ([0-9][^\s,]*) or above'))
+    if (-not $ms.Count) { return $null }
+    $min = ''; foreach ($m in $ms) { $v = $m.Groups[3].Value; if (-not $min -or (Compare-ModVersion $v $min) -gt 0) { $min = $v } }
+    return [pscustomobject]@{
+        loader = $ms[0].Groups[2].Value.ToLower()
+        mods = @($ms | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+        ranges = @($ms | ForEach-Object { "[$($_.Groups[3].Value),)" } | Sort-Object -Unique)
+        min = $min
+    }
+}
+function Start-LoaderJob($d, [string]$ver, [bool]$restart, [bool]$local) {
+    # install.ps1 -SetLoader puts the new loader into the server folder; $restart starts the server again when it worked
+    if ($script:installProc) { Show-Msg '다른 설치나 업데이트가 진행 중이에요. 끝난 다음에 다시 해 주세요.'; return $false }
+    $i = Read-Json (Join-Path $d 'server-info.json')
+    $script:loaderJob = @{ dir = $d; ver = $ver; name = (Get-LoaderName $i.loader); restart = $restart; local = $local }
+    $txtConsole.AppendText("`r`n[관리 프로그램] $(Get-LoaderName $i.loader)를 $ver(으)로 올리는 중이에요. 몇 분 걸릴 수 있어요.`r`n")
+    Start-InstallJob "-PackId `"$($i.pack)`" -VersionKey `"$($i.version)`" -Name `"$(Split-Path $d -Leaf)`" -SetLoader $ver" 'loader'
+    return $true
+}
+function Complete-LoaderJob([bool]$ok) {
+    $j = $script:loaderJob; $script:loaderJob = $null
+    if (-not $j) { return }
+    if ((Get-SelDir) -eq $j.dir) { Show-SrvInfo }
+    if (-not $ok) { $lblStage.Text = "$($j.name)를 바꾸지 못했어요. 서버는 예전 그대로예요. 이유: $($script:installErr)"; return }
+    $lblStage.Text = "$($j.name)를 $($j.ver)(으)로 올렸어요. 친구 PC는 [▶ 게임 켜기]를 누르면 알아서 맞춰요."
+    if ($j.restart -and (Get-SelDir) -eq $j.dir) { Start-Server -Local:$j.local }
 }
 
 function Complete-Server {
@@ -987,6 +1113,26 @@ function Complete-Server {
     }
     elseif ($all -match 'OutOfMemoryError') { $hint = '서버 램이 모자라요. 오른쪽 위 [서버 램] 숫자를 1~2 올리고 [램 바꾸기]를 누른 뒤 다시 켜 보세요.' }
     elseif ($all -match 'FAILED TO BIND TO PORT|Address already in use') { $hint = '다른 서버가 이미 25565번 포트를 쓰고 있어요. 프로그램을 닫았다가 다시 켜면 찾아서 꺼 드려요.' }
+    $need = Find-LoaderNeed $s; $i = Read-Json (Join-Path $s.dir 'server-info.json')
+    # Only when the server's version really is too old (never ask to "raise" to the version it already runs)
+    if ($need -and $i -and $i.loader -eq $need.loader -and @($need.ranges | Where-Object { -not (Test-VersionRange $i.loaderVersion $_) }).Count) {
+        $ln = Get-LoaderName $i.loader; $what = "'$($need.mods -join "', '")' 모드"
+        $hint = "$what 때문에 $ln $($need.min) 이상이 필요해요. 이 서버는 $ln $($i.loaderVersion)이에요."
+        $lblStage.Text = $hint
+        $txtConsole.AppendText("`r`n[관리 프로그램] 서버가 멈췄어요 (종료 코드 $code). $hint`r`n")
+        try { $ver = Find-LoaderVersion $i.loader $i.mc $i.loaderVersion $need.ranges }
+        catch { Show-Msg "$ln 버전 목록을 받지 못했어요. 인터넷을 확인하고 서버를 다시 켜 보세요."; return }
+        if (-not $ver) {
+            Show-Msg ("$what 은(는) 이 서버(마인크래프트 $($i.mc))의 $($ln)로는 켤 수 없어요.`n(다른 마인크래프트 버전용 파일일 수 있어요)`n`n" +
+                "[모드 추가 / 관리]에서 이 모드를 빼고 다시 켜 주세요.") 'Warning'
+            return
+        }
+        if (Ask-YesNo ("$what 이(가) $ln $($need.min) 이상을 필요로 해서 서버가 안 켜졌어요.`n지금 이 서버는 $ln $($i.loaderVersion)이에요.`n`n" +
+                "$($ln)를 $ver(으)로 올리고 다시 켤까요? (추천)`n- 월드와 모드, 설정은 그대로예요.`n- 친구 PC는 [▶ 게임 켜기]를 누르면 알아서 같은 버전으로 맞춰요.")) {
+            [void](Start-LoaderJob $s.dir $ver $true $s.local)
+        }
+        return
+    }
     $lblStage.Text = $hint
     $txtConsole.AppendText("`r`n[관리 프로그램] 서버가 멈췄어요 (종료 코드 $code). $hint`r`n")
     $jar = Find-CulpritMod $s
@@ -1781,6 +1927,46 @@ function Request-ModSource($d, [string]$file, $log) {
     if ($log) { $log.Invoke("'$file': 친구에게 원본 링크($(Get-UrlSite $u))를 알려 줄게요.") }
     return $true
 }
+function Remove-AddedMod($d, [string]$file) {
+    # Out of the server and the friends' list; the file itself goes to _removed_mods
+    $rm = Join-Path $d '_removed_mods'; New-Item -ItemType Directory -Force $rm | Out-Null
+    foreach ($p in @((Join-Path $d "mods\$file"), (Join-Path $d "친구용_추가모드\$file"))) { if (Test-Path -LiteralPath $p) { Move-Item -LiteralPath $p -Destination $rm -Force } }
+    Save-AddedMods $d @(Get-AddedMods $d | Where-Object { $_.file -ne $file }); Update-FriendGuide $d
+}
+function Confirm-ModLoader($d, $files, $log) {
+    # Mods just added that need a newer Forge/NeoForge than the server runs would stop it at "requires forge X or above":
+    # raise the server's loader (asked), or take those mods out again
+    $i = Read-Json (Join-Path $d 'server-info.json')
+    if (-not $i -or $i.loader -notin 'forge', 'neoforge') { return }
+    $ln = Get-LoaderName $i.loader
+    $title = @{}; foreach ($m in (Get-AddedMods $d)) { $title[$m.file] = $m.title }
+    $bad = @()
+    foreach ($fn in @($files)) {
+        $jar = @((Join-Path $d "mods\$fn"), (Join-Path $d "친구용_추가모드\$fn")) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        if (-not $jar) { continue }
+        $rs = @(Get-JarLoaderRanges $jar $i.loader | Where-Object { -not (Test-VersionRange $i.loaderVersion $_) })
+        if ($rs.Count) { $t = $fn; if ($title[$fn]) { $t = $title[$fn] }; $bad += [pscustomobject]@{ file = $fn; title = $t; ranges = $rs } }
+    }
+    if (-not $bad.Count) { return }
+    $what = "'$(@($bad | ForEach-Object { $_.title }) -join "', '")'"
+    $need = @($bad | ForEach-Object { $_.ranges } | ForEach-Object { Format-VersionRange $_ } | Sort-Object -Unique) -join ', '
+    try { $ver = Find-LoaderVersion $i.loader $i.mc $i.loaderVersion @($bad | ForEach-Object { $_.ranges }) }
+    catch { $log.Invoke("$what 은(는) $ln $need 이(가) 필요해요. (이 서버는 $($i.loaderVersion)) 버전 목록을 받지 못해서 그대로 뒀어요. 서버가 안 켜지면 그때 다시 알려 드려요."); return }
+    if (-not $ver) {
+        foreach ($b in $bad) { Remove-AddedMod $d $b.file }
+        $log.Invoke("뺐어요: $what  ($ln $need 이(가) 필요해서 이 서버에서는 안 돼요. 파일은 _removed_mods 폴더에 있어요)")
+        Show-Msg "$what 은(는) $ln $need 이(가) 필요해서 이 서버(마인크래프트 $($i.mc) / $ln $($i.loaderVersion))에서는 켤 수 없어요.`n다른 마인크래프트 버전용 파일일 수 있어요. 그래서 다시 뺐어요." 'Warning'
+        return
+    }
+    if (Ask-YesNo ("$what 은(는) $ln $need 이(가) 필요해요. 이 서버는 $ln $($i.loaderVersion)이에요.`n`n" +
+            "$($ln)를 $ver(으)로 올릴까요? (추천)`n- 월드와 다른 모드, 설정은 그대로예요.`n- 친구 PC는 [▶ 게임 켜기]를 누르면 알아서 같은 버전으로 맞춰요.`n`n" +
+            "[아니요]를 누르면 이 모드를 다시 빼요. ($($ln)가 낮으면 서버가 안 켜져요)")) {
+        if (Start-LoaderJob $d $ver $false $false) { $log.Invoke("$($ln)를 $ver(으)로 올리는 중이에요. 진행 상황은 [내 서버] 화면에 나와요. 끝날 때까지 서버를 켜지 마세요.") }
+        return
+    }
+    foreach ($b in $bad) { Remove-AddedMod $d $b.file }
+    $log.Invoke("뺐어요: $what  (파일은 _removed_mods 폴더에 있어요)")
+}
 function Show-ModManager {
     $d = Get-SelDir; if (-not $d) { return }
     if (-not (Assert-ServerOff $d)) { return }
@@ -1839,7 +2025,12 @@ function Show-ModManager {
             try {
                 $inst = Get-InstalledProjects $d
                 if ($inst.ContainsKey($h.project_id)) { Show-Msg "'$($h.title)' 은(는) 이미 이 서버에 들어 있어요." }
-                else { Add-ModrinthMod $d $h.project_id $mc $loader $inst $log; Update-FriendGuide $d; $log.Invoke('완료! [초대 링크 복사]로 친구들에게 새 링크를 보내 주세요. 친구는 링크만 열면 이 모드까지 자동으로 받아요.') }
+                else {
+                    $had = @{}; foreach ($m in (Get-AddedMods $d)) { $had[$m.file] = $true }
+                    Add-ModrinthMod $d $h.project_id $mc $loader $inst $log; Update-FriendGuide $d
+                    $log.Invoke('완료! [초대 링크 복사]로 친구들에게 새 링크를 보내 주세요. 친구는 링크만 열면 이 모드까지 자동으로 받아요.')
+                    Confirm-ModLoader $d @(Get-AddedMods $d | Where-Object { -not $had.ContainsKey($_.file) } | ForEach-Object { $_.file }) $log
+                }
             }
             catch { $log.Invoke("실패: $($_.Exception.Message)") }
             finally { $f.Cursor = 'Default'; & $refresh }
@@ -1864,6 +2055,7 @@ function Show-ModManager {
             Save-AddedMods $d $list
             $f.Cursor = 'WaitCursor'
             try {
+                Confirm-ModLoader $d @($o.FileNames | ForEach-Object { Split-Path $_ -Leaf }) $log
                 # Look the files up on Modrinth now, so the host knows right away which ones the invite link can carry
                 $before = @(Get-AddedMods $d | Where-Object { $_.forClient -and -not $_.projectId }).Count
                 Update-FriendGuide $d
@@ -1885,9 +2077,7 @@ function Show-ModManager {
             if ($lb.SelectedIndex -lt 0) { return }
             $list = @(Get-AddedMods $d); $m = $list[$lb.SelectedIndex]
             if (-not (Ask-YesNo "'$($m.title)' 을(를) 서버에서 뺄까요?`n이 모드로 만든 아이템이나 블록은 월드에서 사라져요.")) { return }
-            $rm = Join-Path $d '_removed_mods'; New-Item -ItemType Directory -Force $rm | Out-Null
-            foreach ($p in @((Join-Path $d "mods\$($m.file)"), (Join-Path $d "친구용_추가모드\$($m.file)"))) { if (Test-Path -LiteralPath $p) { Move-Item -LiteralPath $p -Destination $rm -Force } }
-            Save-AddedMods $d @($list | Where-Object { $_.file -ne $m.file }); Update-FriendGuide $d; & $refresh
+            Remove-AddedMod $d $m.file; & $refresh
             $log.Invoke("뺐어요: $($m.title)  (파일은 _removed_mods 폴더에 있어요)")
         })
     & $refresh
@@ -3098,6 +3288,8 @@ function Get-JoinCode($d) {
             if (Test-PackFileName $fn) { [ordered]@{ p = $_.projectId; f = $fn } }
         })
     $o = [ordered]@{ v = 1; p = $i.pack; k = (Get-VersionKey $d $i); n = (Split-Path $d -Leaf); a = (Get-PlayitAddress); m = $mods; l = $links; r = $rps }
+    # The server runs a newer Forge/NeoForge than the pack's (a mod needed it): friends' games need at least that one too
+    if ($i.PSObject.Properties['loaderMin'] -and "$($i.loaderMin)" -match $LoaderVersionPattern) { $o['fv'] = [string]$i.loaderMin; $o['fl'] = [string]$i.loader }
     # A pack the host added by hand is unknown to the friend's copy: the code carries it (CurseForge: just this version)
     $cp = Get-CustomPacks | Where-Object { $_.id -eq $i.pack } | Select-Object -First 1
     if ($cp) {
@@ -3123,6 +3315,8 @@ function Read-JoinCode([string]$text) {
     # Links to mods' own pages: only plain https addresses, shown with their site so nobody is sent somewhere unexpected
     $okLinks = @(@($c.l) | Where-Object { $_ -and (Test-ModUrl $_.u) -and "$($_.t)".Length -le 80 } | ForEach-Object { [pscustomobject]@{ t = "$($_.t)"; u = "$($_.u)" } })
     $c | Add-Member -NotePropertyName l -NotePropertyValue $okLinks -Force
+    $fv = ''; if ($c.PSObject.Properties['fv'] -and "$($c.fv)" -match $LoaderVersionPattern) { $fv = [string]$c.fv }
+    $c | Add-Member -NotePropertyName fv -NotePropertyValue $fv -Force
     return $c
 }
 function Test-ModUrl($u) { return "$u".Length -le 300 -and "$u" -match '^https://[A-Za-z0-9.-]+\.[A-Za-z]{2,}(:\d{1,5})?(/[^\s"<>`]*)?$' }
@@ -3271,9 +3465,10 @@ function Start-JoinGame($c, [string]$addr, [int]$ram, $modsB64 = $null, $packsB6
         if (Test-Path -LiteralPath $lf) { Copy-Item -LiteralPath $lf -Destination (Join-Path $gd 'mod-links.prev.json') -Force }
         [IO.File]::WriteAllText($lf, (ConvertTo-Json -InputObject @($c.l) -Depth 3), $Utf8)
     }
+    $lm = ''; if ($c.PSObject.Properties['fv'] -and "$($c.fv)" -match $LoaderVersionPattern) { $lm = " -LoaderMin $($c.fv)" }
     $script:gameJob = @{ gameDir = $gd }
     $tabs.SelectedTab = $tabJoin
-    Start-InstallJob "-Client -PackId $($c.p) -VersionKey `"$($c.k)`" -Name `"$($c.n)`" -GameDir `"$gd`" -Address `"$addr`" -AddedMods `"$mods`" -AddedPacks `"$rps`" -GameRamGB $ram" 'join'
+    Start-InstallJob "-Client -PackId $($c.p) -VersionKey `"$($c.k)`" -Name `"$($c.n)`" -GameDir `"$gd`" -Address `"$addr`" -AddedMods `"$mods`" -AddedPacks `"$rps`" -GameRamGB $ram$lm" 'join'
 }
 # ---------------- what a friend downloads and puts in by hand (never files passed on by the host) ----------------
 $ManualModsDir = '직접_받은_모드'
@@ -3461,7 +3656,7 @@ $btnJoinAgain.Add_Click({
             $oldLinks = @(Read-JsonList (Join-Path $gdir 'mod-links.json'))
             $ch = Get-JoinChanges @() $oldLinks ([pscustomobject]@{ m = @(); l = @($new.l) })
             $oldPacks = ''; if ($m.PSObject.Properties['addedPacks']) { $oldPacks = [string]$m.addedPacks }
-            if ($new.p -ne $m.pack -or $new.k -ne $m.versionKey -or $newB64 -ne [string]$m.addedMods -or (ConvertTo-ModsB64 $new.r 'zip') -ne $oldPacks -or $ch.any) {
+            if ($new.p -ne $m.pack -or $new.k -ne $m.versionKey -or $newB64 -ne [string]$m.addedMods -or (ConvertTo-ModsB64 $new.r 'zip') -ne $oldPacks -or $ch.any -or "$($new.fv)" -ne "$($m.loaderMin)") {
                 $txtJoinLog.AppendText("방장이 모드(또는 모드팩 버전)를 바꿨어요. 알아서 맞출게요.`r`n")
                 Start-JoinGame $new $addr ([int]$m.ramGB); return
             }
@@ -3469,7 +3664,7 @@ $btnJoinAgain.Add_Click({
         }
         else { $txtJoinLog.AppendText("방장 서버가 꺼져 있거나 확인할 수 없어서 지난번 그대로 켜요.`r`n") }
         # The same added-mods value as last time, untouched, so an unchanged game is recognised and left alone
-        $c = [pscustomobject]@{ p = $m.pack; k = $m.versionKey; n = $m.name }
+        $c = [pscustomobject]@{ p = $m.pack; k = $m.versionKey; n = $m.name; fv = "$($m.loaderMin)" }
         $oldPacks = ''; if ($m.PSObject.Properties['addedPacks']) { $oldPacks = [string]$m.addedPacks }
         Start-JoinGame $c $addr ([int]$m.ramGB) ([string]$m.addedMods) $oldPacks
     })

@@ -15,7 +15,10 @@
     [string]$Address = '127.0.0.1',
     [string]$AddedMods = '',   # friend: base64 JSON [{p: modrinthProjectId, f: fileName}, ...] the host added by hand
     [string]$AddedPacks = '',  # friend: the same for resource packs the host added (Modrinth ones only)
-    [int]$GameRamGB = 6
+    [int]$GameRamGB = 6,
+    [string]$LoaderMin = '',   # friend: the host raised the server's Forge/NeoForge to this; the game needs at least it too
+    # -SetLoader: $Name is an existing server; install this Forge/NeoForge version in place (a mod the host added needs it)
+    [string]$SetLoader = ''
 )
 # Installs one modpack server into <root>\servers\<Name>.
 # Shared runtimes live in <root>\_program (java\<major>, playit, cache).
@@ -34,6 +37,8 @@ if (-not $ServersDir) { $ServersDir = Join-Path $Root 'servers' }
 $Cache = Join-Path $Prog 'cache'
 $Cp949 = [Text.Encoding]::GetEncoding(949)
 New-Item -ItemType Directory -Force $Cache, $ServersDir | Out-Null
+# Loader versions end up in download URLs and 서버켜기.bat ("47.4.10", "21.1.77", "20.2.3-beta")
+$LoaderVersionPattern = '^[0-9][0-9A-Za-z._+-]{0,31}$'
 
 function Step($msg) { Write-Host ''; Write-Host "==> $msg" -ForegroundColor Cyan }
 function Info($msg) { Write-Host "    $msg" }
@@ -217,6 +222,46 @@ function Install-Loader([string]$dir, $li, [string]$java) {
         }
         default { throw "$($li.loader) 로더는 아직 지원하지 않아요." }
     }
+}
+
+function Get-LoaderName([string]$loader) { if ($loader -eq 'neoforge') { return 'NeoForge' } return 'Forge' }
+function Set-ServerLoader([string]$dir, [string]$version) {
+    # A mod the host added needs a newer Forge/NeoForge than the pack came with: install that one into the same folder.
+    # The world, mods and settings stay; 서버켜기.bat points at the new version only once its install worked.
+    $info = Get-Content -LiteralPath (Join-Path $dir 'server-info.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($info.loader -notin 'forge', 'neoforge') { throw "$($info.loader) 서버는 로더 버전을 바꿀 수 없어요." }
+    if ($version -notmatch $LoaderVersionPattern -or "$($info.mc)" -notmatch '^[0-9][0-9.]*$') { throw "로더 버전이 이상해요: '$version'" }
+    if ($info.loader -eq 'neoforge' -and (Get-NeoForgeMc $version) -ne $info.mc) { throw "NeoForge $version 은(는) 마인크래프트 $($info.mc) 용이 아니에요." }
+    $old = [string]$info.loaderVersion; $ln = Get-LoaderName $info.loader
+    Write-Host "$ln 바꾸기: $old -> $version  (서버: $(Split-Path $dir -Leaf))" -ForegroundColor Yellow
+    $major = [int]$info.java; if (-not $major) { $major = Get-JavaMajor $info.mc }
+    $java = Get-Java $major
+    # The installer may write its own user_jvm_args.txt; the server's RAM and GC lines must survive
+    $jvm = Join-Path $dir 'user_jvm_args.txt'; $jvmBytes = $null
+    if (Test-Path -LiteralPath $jvm) { $jvmBytes = [IO.File]::ReadAllBytes($jvm) }
+    try { $launch = Install-Loader $dir @{ loader = $info.loader; version = $version; mc = $info.mc } $java }
+    finally { if ($jvmBytes) { [IO.File]::WriteAllBytes($jvm, $jvmBytes) } }
+    foreach ($junk in 'run.bat', 'run.sh') { $jp = Join-Path $dir $junk; if (Test-Path $jp) { Remove-Item -Force $jp } }
+    Get-ChildItem $dir -Filter '*installer.jar.log' -File | Remove-Item -Force
+
+    Step '서버켜기.bat 고치는 중'
+    $bat = Join-Path $dir '서버켜기.bat'
+    $text = [IO.File]::ReadAllText($bat, $Cp949)
+    $re = '(?m)^("%PROG%\\java\\\d+\\bin\\java\.exe")[ \t]+[^\r\n]+'
+    if ($text -notmatch $re) { throw '서버켜기.bat 에서 서버를 켜는 줄을 찾지 못했어요.' }
+    [IO.File]::WriteAllText($bat, [regex]::Replace($text, $re, '${1} ' + $launch.Replace('$', '$$')), $Cp949)
+
+    # loaderMin: a pack update and the friends' games keep at least this version (packLoaderVersion: what the pack came with)
+    if (-not $info.PSObject.Properties['packLoaderVersion']) { $info | Add-Member -NotePropertyName packLoaderVersion -NotePropertyValue $old }
+    $info | Add-Member -NotePropertyName loaderVersion -NotePropertyValue $version -Force
+    $info | Add-Member -NotePropertyName loaderMin -NotePropertyValue $version -Force
+    $info | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dir 'server-info.json') -Encoding UTF8
+    Write-Host ''
+    Write-Host '==================================================' -ForegroundColor Green
+    Write-Host "  완료! $($ln)를 $old -> $version(으)로 바꿨어요." -ForegroundColor Green
+    Write-Host '  월드와 모드, 설정은 그대로예요.' -ForegroundColor Green
+    Write-Host '  친구 PC는 [▶ 게임 켜기]를 누르면 알아서 같은 버전으로 맞춰요.' -ForegroundColor Green
+    Write-Host '==================================================' -ForegroundColor Green
 }
 
 function Write-Cp949([string]$path, [string]$text) {
@@ -1266,8 +1311,12 @@ function Install-Client($pack) {
         $jars = foreach ($d in 'mods', '_client_only_mods', '친구용_추가모드') { Get-ChildItem -LiteralPath (Join-Path $FromServer $d) -Filter '*.jar' -File -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Name):$($_.Length)" } }
         $jars = @($jars) + @(Get-ChildItem -LiteralPath (Join-Path $FromServer '_resourcepacks') -Filter '*.zip' -File -ErrorAction SilentlyContinue | ForEach-Object { "rp/$($_.Name):$($_.Length)" })
         $sigSrc = "$($pack.id)|$verLabel|" + ((@($jars) | Sort-Object) -join ',')
+        # The host's server runs a newer loader than the pack's for a mod that needs it: the game needs it too
+        $minLoader = ''; if ($info.PSObject.Properties['loaderMin']) { $minLoader = [string]$info.loaderMin }
     }
-    else { $verLabel = $VersionKey; $sigSrc = "$($pack.id)|$VersionKey|$AddedMods|$AddedPacks" }
+    else { $verLabel = $VersionKey; $sigSrc = "$($pack.id)|$VersionKey|$AddedMods|$AddedPacks"; $minLoader = $LoaderMin }
+    if ($minLoader -notmatch $LoaderVersionPattern) { $minLoader = '' }
+    if ($minLoader) { $sigSrc += "|loader=$minLoader" }
     # Bumped whenever the way the game folder is built changes, so existing game folders get rebuilt once
     $sigSrc = "build7|$sigSrc"
     $sha = [Security.Cryptography.SHA256]::Create()
@@ -1294,6 +1343,11 @@ function Install-Client($pack) {
         elseif ($pack.source -eq 'curseforge') { $li = Get-CurseForgeClient $pack $VersionKey $script:tmp }
         else { $ver = Get-ModrinthVersion $pack $VersionKey; $verLabel = $ver.version_number; $li = Get-ModrinthClient $ver $script:tmp }
         if ($li.version -notmatch '^[A-Za-z0-9._+-]+$' -or "$($li.mc)" -notmatch '^[0-9][0-9.]*$') { throw "모드팩 안의 버전 정보가 이상해요 (마인크래프트 '$($li.mc)', 로더 '$($li.version)')." }
+        if ($minLoader -and $li.loader -in 'forge', 'neoforge' -and (Compare-ModVersion $minLoader $li.version) -gt 0 -and
+            ($li.loader -eq 'forge' -or (Get-NeoForgeMc $minLoader) -eq $li.mc)) {
+            Info "방장 서버에 맞춰 $(Get-LoaderName $li.loader)는 모드팩 기본값($($li.version)) 대신 $minLoader(으)로 써요."
+            $li = @{ loader = $li.loader; version = $minLoader; mc = $li.mc }
+        }
         Get-AddedClientMods $AddedMods (Join-Path $script:tmp 'mods')
         # Resource packs the host added: the host's own copies, or for a friend the same Modrinth files
         if ($host_) { Get-ChildItem -LiteralPath (Join-Path $FromServer '_resourcepacks') -Filter '*.zip' -File -ErrorAction SilentlyContinue | ForEach-Object { New-Item -ItemType Directory -Force (Join-Path $script:tmp 'resourcepacks') | Out-Null; Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $script:tmp 'resourcepacks') -Force } }
@@ -1349,7 +1403,7 @@ function Install-Client($pack) {
     }
     [ordered]@{
         kind = $(if ($host_) { 'host' } else { 'friend' }); name = $Name; pack = $pack.id; packName = $pack.name; version = $verLabel; versionKey = $VersionKey
-        versionId = $vid; loader = $li.loader; loaderVersion = $li.version; mc = $li.mc; address = $Address; addedMods = $AddedMods; addedPacks = $AddedPacks
+        versionId = $vid; loader = $li.loader; loaderVersion = $li.version; loaderMin = $LoaderMin; mc = $li.mc; address = $Address; addedMods = $AddedMods; addedPacks = $AddedPacks
         profile = $profKey; profileName = $label; serverEntry = $entry; sig = $sig; light = [bool]$light; ramGB = $GameRamGB; installed = (Get-Date -Format 'yyyy-MM-dd HH:mm')
         installedAt = (Get-Date).ToString('o'); crashFixed = $(if ($crash) { $crash.file } elseif ($old -and $old.PSObject.Properties['crashFixed']) { $old.crashFixed } else { '' }); disabled = @($offList); packsOn = @($packsOn)
     } | ConvertTo-Json | Set-Content -LiteralPath $markerFile -Encoding UTF8
@@ -1372,9 +1426,15 @@ try {
         if ($pack -and $pack.source -eq 'curseforge' -and @($pack.versions | Where-Object { $_.url -notmatch '^https://(mediafilez|edge)\.forgecdn\.net/files/\d+/\d+/[^/?#]+$' }).Count) { throw '직접 추가한 모드팩의 다운로드 주소가 CurseForge가 아니에요.' }
         if ($pack -and $pack.source -eq 'modrinth' -and "$($pack.slug)" -notmatch '^[A-Za-z0-9_-]{2,64}$') { throw '직접 추가한 모드팩 정보가 이상해요.' }
     }
-    if (-not $pack) { throw "목록에 없는 모드팩이에요: $PackId" }
+    if (-not $pack -and -not $SetLoader) { throw "목록에 없는 모드팩이에요: $PackId" }
     if ($Client) {
         Install-Client $pack
+        $result = 'ok'
+    }
+    elseif ($SetLoader) {
+        $sd = Join-Path $ServersDir $Name
+        if ($Name -notmatch '^[A-Za-z0-9]([A-Za-z0-9 ._-]{0,58}[A-Za-z0-9_-])?$' -or -not (Test-Path -LiteralPath (Join-Path $sd 'server-info.json'))) { throw "서버를 찾지 못했어요: $Name" }
+        Set-ServerLoader $sd $SetLoader
         $result = 'ok'
     }
     else {
@@ -1562,6 +1622,14 @@ try {
     if ($li.version -notmatch '^[A-Za-z0-9._+-]+$' -or "$($li.mc)" -notmatch '^[0-9][0-9.]*$') {
         throw "모드팩 안의 버전 정보가 이상해요 (마인크래프트 '$($li.mc)', 로더 '$($li.version)'). 다른 버전을 골라 주세요."
     }
+    # The host once raised the loader for a mod that needs it (Set-ServerLoader): an update must not take it back down
+    $raised = ''; $packLoader = $li.version
+    if ($Update -and $oldInfo.PSObject.Properties['loaderMin'] -and "$($oldInfo.loaderMin)" -match $LoaderVersionPattern -and
+        $oldInfo.loader -eq $li.loader -and "$($oldInfo.mc)" -eq "$($li.mc)" -and (Compare-ModVersion $oldInfo.loaderMin $li.version) -gt 0) {
+        $raised = [string]$oldInfo.loaderMin
+        Info "직접 추가한 모드 때문에 $(Get-LoaderName $li.loader)는 모드팩 기본값($($li.version)) 대신 $raised(으)로 설치해요."
+        $li = @{ loader = $li.loader; version = $raised; mc = $li.mc }   # without the pack's own installer jar
+    }
     $major = Get-JavaMajor $li.mc
     $java = Get-Java $major
     $launch = Install-Loader $dir $li $java
@@ -1670,11 +1738,13 @@ pause >nul
 * 방장이 모드를 따로 추가했다면 그 모드 파일도 받아서 mods 폴더에 넣어야 해요.
 "@
 
-    [ordered]@{
+    $si = [ordered]@{
         pack = $pack.id; packName = $pack.name; version = $verLabel; versionKey = $VersionKey; mc = $li.mc
         loader = $li.loader; loaderVersion = $li.version; java = $major; ramGB = $RamGB
         page = $pack.page; installed = (Get-Date -Format 'yyyy-MM-dd HH:mm')
-    } | ConvertTo-Json | Set-Content (Join-Path $dir 'server-info.json') -Encoding UTF8
+    }
+    if ($raised) { $si['loaderMin'] = $raised; $si['packLoaderVersion'] = $packLoader }
+    $si | ConvertTo-Json | Set-Content (Join-Path $dir 'server-info.json') -Encoding UTF8
 
     if ($Update) {
         Merge-FromOldServer

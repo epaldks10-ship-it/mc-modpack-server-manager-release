@@ -1,15 +1,15 @@
 {
-    "version":  "1.0.21",
-    "date":  "2026-10-19",
-    "notes":  "서버 접속이 mismatched mod channel list(서버에 없는 모드)로 막히면, 게임을 닫고 게임 켜기를 다시 누르세요. 프로그램이 기록을 읽고 서버에 없는 모드를 게임에서 알아서 빼요.",
+    "version":  "1.0.22",
+    "date":  "2026-10-27",
+    "notes":  "모드가 더 높은 Forge 버전을 필요로 해서 서버가 안 켜지면, Forge를 올리고 다시 켤지 물어봐요. 모드를 추가할 때도 바로 확인해요. 친구 게임도 [▶ 게임 켜기]를 누르면 같은 버전으로 맞춰요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "e4a585960f1a90634f414a103aaf907ca1a95ef89403d46d53272550929a97e8"
+                      "sha256":  "d0cbeaaacc8f1fa051e1634adacd8186c878184f0d0c464b25ecac9b2c88dd94"
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "bf4053d753af5b7b0724d053c075dd44263f6b20d975e93cd56c9716aa04c4fa"
+                      "sha256":  "7dccb151013e114f84e3eac7488c7c50842ef8b65aebf5ddc11cbba46f706dc6"
                   },
                   {
                       "path":  "packs.json",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "ea5e9a70d82f488693c4955db79e9cb2c46c025ba9f1503cba14dc0667daa6b6"
+                      "sha256":  "86a0894942d9ebf78724aa8e63bcb15bd2688e8c9989cfef587cd7e4683c06e9"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "8ca5a8fc5cb3e5e9dca0cf3f69a799a15a52a63ce33cacedd7ea4e31ed1198c4"
+                      "sha256":  "9c6725b979531ebbecf7b78b6c05def2cb45f9bdb12d2141433d2094594554f4"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "9822b678c7f3d2f65c458f0c5da47d1b290c47c4dc1494a0618dbabb9081ef2d"
+                     "sha256":  "e0a0d93c07c12b4a03645d0901ea1e2512e8facd1a2a1ead40a7a369631c02cc"
                  }
 }
