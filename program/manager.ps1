@@ -259,6 +259,7 @@ function New-Ctl($type, $x, $y, $w, $h, $text = '') {
 }
 function Open-Url($u) { Start-Process $u }
 function Ask-YesNo($text) { return [Windows.Forms.MessageBox]::Show($text, '모드팩 서버 관리', 'YesNo', 'Question') -eq 'Yes' }
+function Ask-YesNoCancel($text) { return "$([Windows.Forms.MessageBox]::Show($text, '모드팩 서버 관리', 'YesNoCancel', 'Question'))" }
 function Ask-Text($prompt, $default = '') { return [Microsoft.VisualBasic.Interaction]::InputBox($prompt, '모드팩 서버 관리', $default) }
 function Pump($ms) { $sw = [Diagnostics.Stopwatch]::StartNew(); while ($sw.ElapsedMilliseconds -lt $ms) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 30 } }
 
@@ -294,7 +295,8 @@ $form.Controls.Add($tabs)
 # Tab: new server
 # =====================================================================================
 $lblPick = New-Ctl Label 10 10 260 22 '① 모드팩을 고르세요'
-$lstPacks = New-Ctl ListBox 10 35 290 492
+$lstPacks = New-Ctl ListBox 10 35 290 446
+$btnFromBackup = New-Ctl Button 10 486 290 40 '받은 백업으로 서버 만들기'; $btnFromBackup.Font = $bold; $btnFromBackup.BackColor = [Drawing.Color]::FromArgb(255, 241, 204)
 $btnAddPack = New-Ctl Button 10 532 150 40 '+ 모드팩 추가'; $btnAddPack.Font = $bold
 $btnDelPack = New-Ctl Button 165 532 135 40 '목록에서 빼기'; $btnDelPack.Enabled = $false
 function Update-PackList([string]$selectId = '') {
@@ -333,7 +335,7 @@ $txtInstallLog = New-Ctl TextBox 320 497 630 118
 $txtInstallLog.Multiline = $true; $txtInstallLog.ReadOnly = $true; $txtInstallLog.ScrollBars = 'Vertical'; $txtInstallLog.Font = $mono
 $txtInstallLog.BackColor = [Drawing.Color]::White
 
-$tabNew.Controls.AddRange(@($lblPick, $lstPacks, $btnAddPack, $btnDelPack, $lblName, $lblDesc, $lblInfo, $lnkPage, $lblVer, $cmbVer, $lblSrv, $txtName,
+$tabNew.Controls.AddRange(@($lblPick, $lstPacks, $btnFromBackup, $btnAddPack, $btnDelPack, $lblName, $lblDesc, $lblInfo, $lnkPage, $lblVer, $cmbVer, $lblSrv, $txtName,
         $lblRam, $numRam, $lblRamHint, $chkEula, $lnkEula, $btnInstall, $lblWork, $txtInstallLog))
 
 $script:versions = @()
@@ -570,8 +572,8 @@ $installTimer.Add_Tick({
             else { $lblStage.Text = "업데이트에 실패했어요. 서버는 예전 버전 그대로예요. 이유: $($script:installErr)" }
             Update-Servers; Show-SrvInfo
         }
-        elseif ($ok) { $lblWork.ForeColor = [Drawing.Color]::DarkGreen; $lblWork.Text = '완료! [내 서버] 탭을 확인하세요.'; Update-Servers; $tabs.SelectedTab = $tabMy }
-        else { $lblWork.ForeColor = [Drawing.Color]::Firebrick; $lblWork.Text = "설치에 실패했어요. 이유: $($script:installErr)`n인터넷을 확인하고 같은 이름으로 다시 해 보세요." }
+        elseif ($ok) { $lblWork.ForeColor = [Drawing.Color]::DarkGreen; $lblWork.Text = '완료! [내 서버] 탭을 확인하세요.'; Update-Servers; $tabs.SelectedTab = $tabMy; Complete-BackupImport $true }
+        else { $lblWork.ForeColor = [Drawing.Color]::Firebrick; $lblWork.Text = "설치에 실패했어요. 이유: $($script:installErr)`n인터넷을 확인하고 같은 이름으로 다시 해 보세요."; Complete-BackupImport $false }
     })
 function Stop-InstallJob {
     # Ends install.ps1 together with the curl / Java installer it started; the leftover folder is cleaned on next start
@@ -2627,6 +2629,7 @@ function New-WorldBackup($d, [string]$tag) {
     $w = Get-LevelDir $d
     if (-not (Test-Path -LiteralPath $w)) { return $null }
     $bk = Join-Path $d 'backups'; New-Item -ItemType Directory -Force $bk | Out-Null
+    Write-WorldCard $d
     $zip = Join-Path $bk ("${tag}_" + (Get-Date -Format 'yyyyMMdd_HHmmss') + '.zip')
     # Written under a temporary name: a half-made zip must never show up as a backup you can restore
     $p = Start-ZipProc $w "$zip.part"
@@ -2654,6 +2657,7 @@ function Start-AutoBackup($d) {
         $txtConsole.AppendText("[관리 프로그램] 디스크 공간이 모자라서 이번에는 자동 백업을 건너뛰었어요. 오래된 백업이나 servers_old 폴더를 지우면 공간이 생겨요.`r`n")
         return
     }
+    Write-WorldCard $d
     $zip = Join-Path $bk ('auto_' + (Get-Date -Format 'yyyyMMdd_HHmmss') + '.zip')
     $script:autoBk = [pscustomobject]@{ proc = (Start-ZipProc $w "$zip.part"); dir = $d; zip = $zip }
     $btnStart.Enabled = $false; $btnLocal.Enabled = $false
@@ -2721,6 +2725,7 @@ function Start-LiveBackup {
         return $false
     }
     $bk = Join-Path $s.dir 'backups'; New-Item -ItemType Directory -Force $bk | Out-Null
+    Write-WorldCard $s.dir
     $script:liveBk = [pscustomobject]@{ dir = $s.dir; zip = (Join-Path $bk ('live_' + (Get-Date -Format 'yyyyMMdd_HHmmss') + '.zip')); proc = $null; sw = [Diagnostics.Stopwatch]::StartNew() }
     # The zip starts when the server reports "Saved the game" (Read-ServerOutput)
     $s.proc.Send('save-off'); $s.proc.Send('save-all flush')
@@ -2828,23 +2833,417 @@ function Restore-WorldBackup($d, [string]$zip) {
     if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
 }
 
+# ---------------- a backup made on another PC: someone else takes over the server ----------------
+# Every backup carries mcsm-server.json inside the world folder: the modpack and version, the mods the host added,
+# the whitelist and some settings. With it a friend can rebuild the same server from the zip alone.
+$WorldCardName = 'mcsm-server.json'
+$CardPropKeys = @('difficulty', 'gamemode', 'hardcore', 'force-gamemode', 'pvp', 'max-players', 'spawn-protection', 'allow-flight', 'allow-nether',
+    'view-distance', 'simulation-distance', 'spawn-monsters', 'spawn-animals', 'spawn-npcs', 'max-tick-time')
+$UuidPattern = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+$JarNamePattern = '^[A-Za-z0-9 ._+()\[\]-]+\.jar$'
+function Write-WorldCard($d) {
+    # Never stops a backup: without the card the zip still holds the whole world
+    try {
+        $w = Get-LevelDir $d
+        if (-not (Test-Path -LiteralPath (Join-Path $w 'level.dat'))) { return }
+        $i = Read-Json (Join-Path $d 'server-info.json'); if (-not $i -or -not $i.pack) { return }
+        $k = [string]$i.version; if ($i.PSObject.Properties['versionKey'] -and $i.versionKey) { $k = [string]$i.versionKey }
+        $o = [ordered]@{ v = 1; server = (Split-Path $d -Leaf); pack = [string]$i.pack; packName = [string]$i.packName; version = [string]$i.version; k = $k
+            mc = [string]$i.mc; loader = [string]$i.loader; ramGB = (Get-ServerRam $d); made = (Get-Date -Format 'yyyy-MM-dd HH:mm')
+        }
+        if ($i.PSObject.Properties['loaderMin'] -and "$($i.loaderMin)") { $o['loaderMin'] = [string]$i.loaderMin }
+        # A pack added by hand is unknown to the other PC: the card carries it, as the invite code does
+        $cp = Get-CustomPacks | Where-Object { $_.id -eq $i.pack } | Select-Object -First 1
+        if ($cp) {
+            $rec = ConvertTo-PackRecord $cp
+            if ($rec.Contains('versions')) { $rec['versions'] = @($rec['versions'] | Where-Object { $_.label -eq $i.version }) }
+            $rec.Remove('desc'); $rec.Remove('refreshed'); $o['d'] = $rec
+        }
+        $added = @(Get-AddedMods $d)
+        $o['mods'] = @(foreach ($m in $added) {
+                if (-not $m.projectId) { continue }
+                $fn = [string]$m.file; if ($m.PSObject.Properties['mrFile'] -and $m.mrFile) { $fn = [string]$m.mrFile }
+                [ordered]@{ p = [string]$m.projectId; f = $fn; t = [string]$m.title; s = [bool]$m.onServer; c = [bool]$m.forClient }
+            })
+        # Jars that are not on Modrinth: only their names and official pages travel, never the files
+        $o['files'] = @(foreach ($m in $added) {
+                if ($m.projectId) { continue }
+                $u = ''; if ($m.PSObject.Properties['sourceUrl']) { $u = [string]$m.sourceUrl }
+                [ordered]@{ f = [string]$m.file; t = [string]$m.title; u = $u; s = [bool]$m.onServer; c = [bool]$m.forClient }
+            })
+        $o['whitelist'] = @(foreach ($e in @(Read-JsonList (Join-Path $d 'whitelist.json'))) { if ($e.uuid -and $e.name) { [ordered]@{ uuid = [string]$e.uuid; name = [string]$e.name } } })
+        $pr = Get-Props $d; $po = [ordered]@{}
+        foreach ($key in $CardPropKeys) { if ($pr.Contains($key)) { $po[$key] = [string]$pr[$key] } }
+        $o['props'] = $po
+        [IO.File]::WriteAllText((Join-Path $w $WorldCardName), (ConvertTo-Json -InputObject $o -Depth 6), $Utf8)
+    }
+    catch { Write-ErrLog "world card: $($_.Exception.Message)" }
+}
+function ConvertFrom-WorldCard($j) {
+    # The card comes from someone else's file: only plain values of the expected shape get through
+    $vk = '^[A-Za-z0-9 ._+()\[\]-]{1,80}$'
+    if (-not $j -or "$($j.pack)" -notmatch '^[A-Za-z0-9._-]{1,80}$' -or "$($j.k)" -notmatch $vk -or "$($j.version)" -notmatch $vk) { return $null }
+    $short = { param($s, [int]$n) $t = ("$s" -replace '[\x00-\x1f]', ' ').Trim(); if ($t.Length -gt $n) { $t = $t.Substring(0, $n) }; $t }
+    $name = "$($j.server)"; if (-not (Test-ServerName $name)) { $name = '' }
+    $ram = 0; try { $ram = [int]$j.ramGB } catch { }; if ($ram -lt 2 -or $ram -gt 64) { $ram = 0 }
+    $lmin = ''; if ("$($j.loaderMin)" -match $LoaderVersionPattern) { $lmin = "$($j.loaderMin)" }
+    $loader = ''; if ("$($j.loader)" -in 'forge', 'neoforge', 'fabric', 'quilt') { $loader = "$($j.loader)" }
+    $mods = @(@($j.mods) | Where-Object { $_ -and "$($_.p)" -match '^[A-Za-z0-9]{4,16}$' -and "$($_.f)" -match $JarNamePattern } | Select-Object -First 300 | ForEach-Object {
+            $t = & $short $_.t 80; if (-not $t) { $t = "$($_.f)" }
+            [pscustomobject]@{ p = "$($_.p)"; f = "$($_.f)"; t = $t; s = [bool]$_.s; c = [bool]$_.c }
+        })
+    $files = @(@($j.files) | Where-Object { $_ -and "$($_.f)" -match $JarNamePattern } | Select-Object -First 300 | ForEach-Object {
+            $t = & $short $_.t 80; if (-not $t) { $t = "$($_.f)" }
+            $u = ''; if (Test-ModUrl $_.u) { $u = "$($_.u)" }
+            [pscustomobject]@{ f = "$($_.f)"; t = $t; u = $u; s = [bool]$_.s; c = [bool]$_.c }
+        })
+    $wl = @(@($j.whitelist) | Where-Object { $_ -and "$($_.uuid)" -match $UuidPattern -and "$($_.name)" -match '^[A-Za-z0-9_]{1,16}$' } | Select-Object -First 500 |
+        ForEach-Object { [pscustomobject]@{ uuid = "$($_.uuid)"; name = "$($_.name)" } })
+    # Only gameplay settings: nothing that touches who may join (online-mode, whitelist) or what the server listens on
+    $props = @{}
+    if ($j.props) { foreach ($pp in $j.props.PSObject.Properties) { if ($pp.Name -in $CardPropKeys -and "$($pp.Value)" -match '^[A-Za-z0-9._-]{1,16}$') { $props[$pp.Name] = "$($pp.Value)" } } }
+    $d = $null; if ($j.d -and (Test-PackDef ([pscustomobject]@{ p = "$($j.pack)"; k = "$($j.k)"; d = $j.d }))) { $d = $j.d }
+    return [pscustomobject]@{ pack = "$($j.pack)"; k = "$($j.k)"; version = "$($j.version)"; server = $name; packName = (& $short $j.packName 100); mc = (& $short $j.mc 20)
+        loader = $loader; loaderMin = $lmin; ramGB = $ram; made = (& $short $j.made 20); d = $d; mods = $mods; files = $files; whitelist = $wl; props = $props
+    }
+}
+function Find-ZipWorld([string]$zip) {
+    # The folder holding level.dat nearest the top: a world backup from this program (with or without a "world" folder),
+    # or a whole server folder zipped by hand
+    $z = [IO.Compression.ZipFile]::OpenRead($zip)
+    try {
+        $best = $null; $bestDepth = 99
+        foreach ($e in $z.Entries) {
+            $n = $e.FullName.Replace('\', '/')   # zips made by older .NET use backslashes
+            if ($n -notmatch '(^|/)level\.dat$') { continue }
+            $pre = $n.Substring(0, $n.Length - 9)
+            $depth = @($pre.Split('/') | Where-Object { $_ }).Count
+            if ($depth -lt $bestDepth -or ($depth -eq $bestDepth -and $pre -match '(^|/)world/$')) { $best = $pre; $bestDepth = $depth }
+        }
+        if ($null -eq $best) { return $null }
+        $size = 0L; $card = $null
+        foreach ($e in $z.Entries) {
+            $n = $e.FullName.Replace('\', '/')
+            if (-not $n.StartsWith($best, [StringComparison]::Ordinal)) { continue }
+            $size += $e.Length
+            if ($n -eq "$best$WorldCardName" -and $e.Length -lt 1MB) {
+                $sr = New-Object IO.StreamReader($e.Open(), [Text.Encoding]::UTF8)
+                try { $card = ConvertFrom-WorldCard ($sr.ReadToEnd() | ConvertFrom-Json) } catch { $card = $null } finally { $sr.Dispose() }
+            }
+        }
+        return [pscustomobject]@{ prefix = $best; size = $size; card = $card }
+    }
+    finally { $z.Dispose() }
+}
+function Expand-ZipWorld([string]$zip, [string]$prefix, [string]$dest) {
+    # Only the world folder comes out, file by file, and nothing may land outside it
+    $tmp = Join-Path (Split-Path $dest -Parent) ('_import_' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+    New-Item -ItemType Directory -Force $tmp | Out-Null
+    $root = [IO.Path]::GetFullPath($tmp).TrimEnd('\') + '\'
+    $ok = $false
+    $z = [IO.Compression.ZipFile]::OpenRead($zip)
+    try {
+        $n = 0
+        foreach ($e in $z.Entries) {
+            $name = $e.FullName.Replace('\', '/')
+            if (-not $name.StartsWith($prefix, [StringComparison]::Ordinal) -or $name.EndsWith('/')) { continue }
+            $rel = $name.Substring($prefix.Length)
+            if (-not $rel -or $rel -eq 'session.lock') { continue }
+            try { $target = [IO.Path]::GetFullPath((Join-Path $tmp $rel.Replace('/', '\'))) } catch { continue }
+            if (-not $target.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            New-Item -ItemType Directory -Force (Split-Path $target -Parent) | Out-Null
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $target, $true)
+            $n++; if ($n % 40 -eq 0) { [Windows.Forms.Application]::DoEvents() }
+        }
+        if (-not (Test-Path -LiteralPath (Join-Path $tmp 'level.dat'))) { throw '이 백업 파일에는 월드가 들어 있지 않아요.' }
+        $ok = $true
+    }
+    finally { $z.Dispose(); if (-not $ok) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue } }
+    if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
+    Move-Item -LiteralPath $tmp -Destination $dest
+}
+function Add-WhitelistEntries($d, $entries) {
+    # Written straight into whitelist.json (the server is off); returns the names that were new
+    $f = Join-Path $d 'whitelist.json'
+    $list = @(foreach ($e in @(Read-JsonList $f)) { if ($e.uuid) { [ordered]@{ uuid = [string]$e.uuid; name = [string]$e.name } } })
+    $have = @{}; foreach ($e in $list) { $have[$e.uuid.ToLower()] = $true }
+    $new = @()
+    foreach ($e in @($entries)) {
+        if (-not $e -or "$($e.uuid)" -notmatch $UuidPattern -or "$($e.name)" -notmatch '^[A-Za-z0-9_]{1,16}$' -or $have[([string]$e.uuid).ToLower()]) { continue }
+        $have[([string]$e.uuid).ToLower()] = $true
+        $list += [ordered]@{ uuid = [string]$e.uuid; name = [string]$e.name }; $new += [string]$e.name
+    }
+    if ($new.Count) { [IO.File]::WriteAllText($f, (ConvertTo-Json -InputObject @($list) -Depth 3), $Utf8) }
+    return $new
+}
+function Get-WorldPlayers([string]$w) {
+    # A backup without a card: the players who have a save in this world, named by Mojang (real accounts only)
+    $out = @()
+    $ids = @(Get-ChildItem -LiteralPath (Join-Path $w 'playerdata') -Filter '*.dat' -ErrorAction SilentlyContinue | ForEach-Object { $_.BaseName } |
+        Where-Object { $_ -match $UuidPattern } | Select-Object -First 40)
+    foreach ($id in $ids) {
+        $r = $null
+        try { $r = Invoke-Api "https://sessionserver.mojang.com/session/minecraft/profile/$($id -replace '-', '')" 8 } catch { break }   # offline or rate limited: stop asking
+        if ($r -and "$($r.name)" -match '^[A-Za-z0-9_]{1,16}$') { $out += [pscustomobject]@{ uuid = $id; name = [string]$r.name } }
+    }
+    return $out
+}
+function Get-CardMissingMods($d, $c) {
+    # Mods the original server had that this one lacks (by Modrinth project or by file name)
+    $ids = @{}; $files = @{}
+    foreach ($m in @(Get-AddedMods $d)) {
+        if ($m.projectId) { $ids["$($m.projectId)"] = $true }
+        $files["$($m.file)".ToLower()] = $true
+        if ($m.PSObject.Properties['mrFile'] -and $m.mrFile) { $files["$($m.mrFile)".ToLower()] = $true }
+    }
+    return [pscustomobject]@{
+        mods  = @(@($c.mods) | Where-Object { -not $ids[$_.p] -and -not $files[$_.f.ToLower()] })
+        files = @(@($c.files) | Where-Object { -not $files[$_.f.ToLower()] })
+    }
+}
+function Install-CardMods($d, $c, $log) {
+    $miss = Get-CardMissingMods $d $c
+    $res = [pscustomobject]@{ added = 0; failed = @(); manual = @() }
+    $friendDir = Join-Path $d '친구용_추가모드'; New-Item -ItemType Directory -Force $friendDir | Out-Null
+    $list = @(Get-AddedMods $d)
+    if ($miss.mods.Count) {
+        # The same files the original server had, from Modrinth itself (hash checked)
+        $tmp = Join-Path $env:TEMP ('mcsm-mods-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        try {
+            [void](Save-ModrinthMods @($miss.mods | ForEach-Object { @{ p = $_.p; f = $_.f } }) $tmp $log)
+            foreach ($m in $miss.mods) {
+                $src = Join-Path $tmp $m.f
+                if (-not (Test-Path -LiteralPath $src)) { $res.failed += $m.t; continue }
+                if ($m.s) { Copy-Item -LiteralPath $src -Destination (Join-Path $d 'mods') -Force }
+                if ($m.c) { Copy-Item -LiteralPath $src -Destination $friendDir -Force }
+                $list += [pscustomobject]@{ projectId = $m.p; title = $m.t; file = $m.f; onServer = $m.s; forClient = $m.c; source = 'modrinth' }
+                $res.added++
+            }
+        }
+        finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    foreach ($m in $miss.files) {
+        # Not on Modrinth, so never passed along: only the copy this PC downloaded itself to join the original server
+        $src = $null
+        if ($c.server) {
+            $src = @((Join-Path $GameRoot "join-$($c.server)\$ManualModsDir\$($m.f)"), (Join-Path $GameRoot "join-$($c.server)\mods\$($m.f)")) |
+                Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        }
+        if (-not $src -or [McsmScan]::ScanJar($src) -eq 1) { $res.manual += $m; continue }
+        if ($m.s) { Copy-Item -LiteralPath $src -Destination (Join-Path $d 'mods') -Force }
+        if ($m.c) { Copy-Item -LiteralPath $src -Destination $friendDir -Force }
+        $list += [pscustomobject]@{ projectId = ''; title = $m.t; file = $m.f; onServer = $m.s; forClient = $m.c; source = 'file'; sourceUrl = $m.u }
+        $res.added++
+        & $log "넣었어요: $($m.f) (친구 서버에 들어갈 때 받아 둔 파일)"
+    }
+    Save-AddedMods $d $list
+    return $res
+}
+function Sync-CardLoader($d, $c) {
+    # The original server ran a newer Forge/NeoForge than the pack's (a mod needed it): this one gets the same
+    if (-not $c.loaderMin) { return '' }
+    $i = Read-Json (Join-Path $d 'server-info.json')
+    if (-not $i -or "$($i.loader)" -notin 'forge', 'neoforge' -or "$($i.loader)" -ne $c.loader) { return '' }
+    if ((Compare-ModVersion ([string]$i.loaderVersion) $c.loaderMin) -ge 0) { return '' }
+    $ln = Get-LoaderName $i.loader
+    if (Start-LoaderJob $d $c.loaderMin $false $false) { return "원래 서버처럼 $($ln)를 $($c.loaderMin)(으)로 올리는 중이에요. 위에 '올렸어요'가 나올 때까지 서버를 켜지 마세요." }
+    return "원래 서버는 $ln $($c.loaderMin)을(를) 썼어요. 서버가 안 켜지면 그때 올릴지 물어볼게요."
+}
+function Get-CardPackName($c) {
+    $p = $packs | Where-Object { $_.id -eq $c.pack } | Select-Object -First 1
+    if ($p) { return $p.name }; if ($c.packName) { return $c.packName }; return $c.pack
+}
+function Invoke-ReceivedImport($d, [string]$zip, $info, [bool]$fresh, $log) {
+    # World, whitelist, (new server: settings), the original server's mods, its Forge version. Returns lines for the user.
+    $c = $info.card
+    $out = @()
+    $w = Get-LevelDir $d
+    $drive = New-Object IO.DriveInfo ([IO.Path]::GetPathRoot([IO.Path]::GetFullPath($d)))
+    if ($drive.AvailableFreeSpace -lt ($info.size + 2GB)) { throw "디스크 공간이 모자라요. 이 월드는 풀면 약 $([math]::Ceiling($info.size / 1GB))GB예요. 공간을 비운 다음 다시 해 주세요." }
+    if (Test-Path -LiteralPath (Join-Path $w 'level.dat')) {
+        if (-not (New-WorldBackup $d 'before-import')) { throw '지금 월드를 백업하지 못해서 멈췄어요.' }
+        $out += '지금 있던 월드는 before-import 백업으로 남겨 뒀어요.'
+    }
+    Expand-ZipWorld $zip $info.prefix $w
+    $when = ''; if ($c -and $c.made) { $when = " ($($c.made)에 만든 백업)" }
+    $out = @("받은 월드를 넣었어요.$when") + $out
+    $guess = -not ($c -and @($c.whitelist).Count)
+    $wl = @(); if ($guess) { $wl = @(Get-WorldPlayers $w) } else { $wl = @($c.whitelist) }
+    $new = @(Add-WhitelistEntries $d $wl)
+    if ($new.Count) {
+        $names = ($new | Select-Object -First 12) -join ', '; if ($new.Count -gt 12) { $names += " 외 $($new.Count - 12)명" }
+        if ($guess) { $out += "이 월드에서 놀았던 $($new.Count)명을 화이트리스트에 넣었어요: $names" } else { $out += "화이트리스트 $($new.Count)명을 그대로 넣었어요: $names" }
+    }
+    elseif ($guess) { $out += '화이트리스트는 직접 넣어 주세요. ([친구 추가])' }
+    if (-not $c) { return $out }
+    if ($fresh -and $c.props.Count) { Set-Props $d $c.props; $out += '난이도, 게임 모드 같은 설정도 원래 서버와 똑같이 맞췄어요.' }
+    $miss = Get-CardMissingMods $d $c
+    $n = $miss.mods.Count + $miss.files.Count
+    if ($n -and -not $fresh) {
+        $titles = @(@($miss.mods | ForEach-Object { $_.t }) + @($miss.files | ForEach-Object { $_.t }) | Select-Object -First 8) -join ', '
+        $how = ''; if ($miss.mods.Count) { $how = ' (Modrinth에 있는 건 같은 파일을 받아서 넣어요)' }
+        if (-not (Ask-YesNo "원래 서버에 있던 모드 $($n)개가 이 서버에는 없어요.`n$titles`n`n같이 넣을까요?$how")) { $n = 0; $out += "원래 서버에 있던 모드 중 $(($miss.mods.Count + $miss.files.Count))개는 넣지 않았어요. 월드에서 그 모드의 블록이 사라질 수 있어요." }
+    }
+    if ($n) {
+        $r = Install-CardMods $d $c $log
+        if ($r.added) { $out += "원래 방장이 추가한 모드 $($r.added)개를 똑같이 넣었어요." }
+        if ($r.failed.Count) { $out += "받지 못한 모드: $(@($r.failed) -join ', ')  → 인터넷을 확인하고 [모드 추가 / 관리]에서 다시 넣어 주세요." }
+        foreach ($m in @($r.manual)) {
+            $where = '원래 방장에게 어디서 받았는지 물어보세요'; if ($m.u) { $where = "$(Get-UrlSite $m.u)에서 받기: $($m.u)" }
+            $out += "직접 넣어야 하는 모드: $($m.t)  ($where)"
+        }
+        if (@($r.manual).Count) { $out += '   → 받은 .jar 파일은 [모드 추가 / 관리] → [내 컴퓨터의 .jar 파일 추가]로 넣어요.' }
+    }
+    $t = Sync-CardLoader $d $c; if ($t) { $out += $t }
+    return $out
+}
+function Get-TakeoverSteps {
+    $s = @('', '이제 이렇게 하면 돼요:'); $n = 1
+    if (-not (Get-PlayitAddress)) { $s += "$n. [Playit 연결 설정]으로 내 주소를 만들어요. (원래 방장과 주소가 달라요)"; $n++ }
+    $s += "$n. [▶ 친구랑 하기]로 켜고, [친구 초대 링크 복사]로 친구들에게 새 링크를 보내요."; $n++
+    $s += "$n. 원래 방장 서버는 꺼 두세요. 두 곳에서 같이 켜면 월드가 둘로 갈라져요."
+    $s += '    (다시 원래 방장이 열 때는 [지금 백업하기]로 만든 최신 백업을 보내 주면 돼요)'
+    return $s
+}
+function Select-BackupZip($owner) {
+    $o = New-Object Windows.Forms.OpenFileDialog; $o.Filter = '백업 파일 (*.zip)|*.zip'; $o.Title = '받은 백업 파일(.zip)을 고르세요'
+    if ($o.ShowDialog($owner) -ne 'OK') { return $null }
+    return $o.FileName
+}
+function Read-ReceivedBackup([string]$path) {
+    $info = $null
+    try { $info = Find-ZipWorld $path }
+    catch { Show-Msg "이 파일을 열지 못했어요. 다 받아진 압축 파일(.zip)인지 확인해 주세요.`n($($_.Exception.Message))" 'Warning'; return $null }
+    if (-not $info) { Show-Msg "이 파일에는 마인크래프트 월드(level.dat)가 없어요.`n월드나 서버 폴더를 압축한 백업 파일인지 확인해 주세요." 'Warning'; return $null }
+    return $info
+}
+function Import-IntoServer($d, [string]$path, $info, $owner, [switch]$NoAsk) {
+    # A received backup into a server that already exists here; returns $true when the world went in
+    if (-not (Assert-ServerOff $d)) { return $false }
+    $c = $info.card
+    if (-not $NoAsk) {
+        $q = "받은 백업의 월드로 바꿀까요?`n지금 월드는 바꾸기 전에 자동으로 백업해 둬요."
+        $i = Read-Json (Join-Path $d 'server-info.json')
+        if ($c -and $i -and ($c.pack -ne "$($i.pack)" -or $c.version -ne "$($i.version)")) {
+            $q = "⚠ 이 백업은 다른 모드팩(또는 다른 버전)으로 만든 서버의 월드예요.`n· 받은 백업: $(Get-CardPackName $c) $($c.version)`n· 이 서버: $($i.packName) $($i.version)`n`n" +
+            "모드가 다르면 블록과 아이템이 사라지거나 월드가 망가질 수 있어요.`n그래도 이 서버에 넣을까요? (지금 월드는 먼저 백업해 둬요)"
+        }
+        elseif (-not $c) { $q += "`n`n원래 서버와 같은 모드팩, 같은 버전으로 만든 서버인지 꼭 확인하세요. 다르면 월드가 망가질 수 있어요." }
+        if (-not (Ask-YesNo $q)) { return $false }
+    }
+    $log = { param($t) $txtConsole.AppendText("[관리 프로그램] $t`r`n") }
+    $owner.Cursor = 'WaitCursor'; $owner.Enabled = $false
+    try { $lines = @(Invoke-ReceivedImport $d $path $info $false $log) }
+    catch { $owner.Enabled = $true; Show-Msg "받은 백업을 넣지 못했어요: $($_.Exception.Message)" 'Error'; return $false }
+    finally { $owner.Enabled = $true; $owner.Cursor = 'Default' }
+    Show-Msg ((@($lines) + (Get-TakeoverSteps)) -join "`n")
+    return $true
+}
+$script:pendingImport = $null   # a received backup waiting for its new server to finish installing
+function Start-ImportFromBackup {
+    if ($script:installProc) { Show-Msg '다른 설치나 업데이트가 진행 중이에요. 끝난 다음에 해 주세요.'; return }
+    $path = Select-BackupZip $form; if (-not $path) { return }
+    $form.Cursor = 'WaitCursor'
+    try { $info = Read-ReceivedBackup $path } finally { $form.Cursor = 'Default' }
+    if (-not $info) { return }
+    $c = $info.card
+    if (-not $c) {
+        Show-Msg ("이 백업에는 어떤 모드팩으로 만든 서버인지 적혀 있지 않아요.`n(예전 버전 프로그램이나 다른 프로그램으로 만든 백업이에요)`n`n" +
+            "① 원래 서버와 같은 모드팩, 같은 버전으로 서버를 먼저 만들어요. (모르면 원래 방장에게 물어보세요)`n" +
+            "② [내 서버] → [백업 / 월드 관리] → [받은 백업 넣기]에서 이 파일을 고르면 돼요.")
+        return
+    }
+    $p = $packs | Where-Object { $_.id -eq $c.pack } | Select-Object -First 1
+    if ($p -and $p.source -eq 'curseforge' -and -not ($p.versions | Where-Object label -eq $c.k)) { $p = $null }
+    $fromCard = $false; if (-not $p -and $c.d) { $p = $c.d; $fromCard = $true }
+    if (-not $p) { Show-Msg "이 프로그램이 모르는 모드팩이에요. ($(Get-CardPackName $c) $($c.version))`n프로그램을 껐다가 다시 켜서 최신 버전으로 업데이트한 다음 다시 해 주세요." 'Warning'; return }
+    # The same modpack and version is already here: the world can go straight into that server
+    $same = @(foreach ($s in @(Get-ChildItem -LiteralPath $ServersDir -Directory -ErrorAction SilentlyContinue)) {
+            if (-not (Test-Path -LiteralPath (Join-Path $s.FullName '서버켜기.bat')) -or (Test-Path -LiteralPath (Join-Path $s.FullName '.installing'))) { continue }
+            $i = Read-Json (Join-Path $s.FullName 'server-info.json')
+            if ($i -and "$($i.pack)" -eq $c.pack -and "$($i.version)" -eq $c.version) { $s.Name }
+        })
+    if ($same.Count) {
+        $r = Ask-YesNoCancel ("이 컴퓨터에 같은 모드팩($($p.name) $($c.version))으로 만든 '$($same[0])' 서버가 이미 있어요.`n`n" +
+            "[예]  '$($same[0])' 서버에 받은 월드를 넣어요. (지금 월드는 먼저 백업해 둬요)`n[아니요]  서버를 하나 더 새로 만들어요.")
+        if ($r -eq 'Cancel') { return }
+        if ($r -eq 'Yes') {
+            Update-Servers; $lstSrv.SelectedItem = $same[0]; $tabs.SelectedTab = $tabMy
+            [void](Import-IntoServer (Join-Path $ServersDir $same[0]) $path $info $form -NoAsk)
+            Show-SrvInfo
+            return
+        }
+    }
+    $name = $c.server; if (-not $name) { $name = Get-DefaultName $p $c.version }
+    $base = $name; $k = 2
+    while (Test-Path -LiteralPath (Join-Path $ServersDir $name)) { $sfx = "-$k"; $name = $base.Substring(0, [Math]::Min($base.Length, 60 - $sfx.Length)).TrimEnd('-', '.', ' ') + $sfx; $k++ }
+    $ram = $c.ramGB; if (-not $ram) { $ram = [int]$p.ramGB }; if (-not $ram) { $ram = 6 }
+    $ram = [int][Math]::Min($numRam.Maximum, [Math]::Max($numRam.Minimum, $ram))
+    $q = "받은 백업으로 서버를 만들까요?`n`n· 모드팩: $($p.name)  (버전 $($c.version))`n· 서버 이름: $name`n· 서버 램: $($ram)GB`n" +
+    "· 원래 방장이 추가한 모드: $(@($c.mods).Count + @($c.files).Count)개`n· 화이트리스트: $(@($c.whitelist).Count)명`n`n" +
+    "월드, 추가 모드, 화이트리스트, 설정을 원래 서버와 똑같이 맞춰요. 모드팩을 받느라 몇 분 걸려요.`n" +
+    "서버를 만들면 마인크래프트 이용약관(EULA)에 동의하는 거예요.`n`n※ 원래 방장 서버와 같이 켜면 월드가 둘로 갈라져요. 원래 서버는 꺼 두세요."
+    if (-not (Ask-YesNo $q)) { return }
+    if ($fromCard) { Add-CustomPack $c.d -NoSelect }
+    # Modrinth versions go by id; a card from an older server may only know the version name
+    $vk = $c.k
+    if ($p.source -eq 'modrinth' -and $vk -eq $c.version) {
+        try {
+            $v = @(Invoke-Api "https://api.modrinth.com/v2/project/$($p.slug)/version" | ForEach-Object { $_ }) | Where-Object { $_.version_number -eq $c.version } | Select-Object -First 1
+            if ($v -and "$($v.id)" -match '^[A-Za-z0-9]{4,16}$') { $vk = [string]$v.id }
+        }
+        catch { }
+    }
+    $tabs.SelectedTab = $tabNew
+    Start-InstallJob "-PackId $($c.pack) -VersionKey `"$vk`" -Name `"$name`" -RamGB $ram -AcceptEula" 'install'
+    if ($script:installProc) { $script:pendingImport = [pscustomobject]@{ name = $name; zip = $path; info = $info } }
+}
+function Complete-BackupImport([bool]$ok) {
+    # Called when the install that Start-ImportFromBackup began has ended
+    $imp = $script:pendingImport; $script:pendingImport = $null
+    if (-not $imp) { return }
+    if (-not $ok) { Show-Msg "서버를 만들지 못해서 받은 월드도 넣지 못했어요.`n이유: $($script:installErr)`n`n인터넷을 확인하고 [받은 백업으로 서버 만들기]를 다시 눌러 주세요." 'Warning'; return }
+    $d = Join-Path $ServersDir $imp.name
+    if (-not (Test-Path -LiteralPath $d)) { return }
+    if ($lstSrv.Items.Contains($imp.name)) { $lstSrv.SelectedItem = $imp.name }
+    $lblStage.Text = '받은 백업의 월드와 모드를 넣는 중이에요... (월드가 크면 몇 분 걸려요)'
+    $log = { param($t) $txtConsole.AppendText("[관리 프로그램] $t`r`n") }
+    $form.Cursor = 'WaitCursor'; $form.Enabled = $false; [Windows.Forms.Application]::DoEvents()
+    try { $lines = @(Invoke-ReceivedImport $d $imp.zip $imp.info $true $log) }
+    catch {
+        $form.Enabled = $true; $lblStage.Text = ''
+        Show-Msg "서버는 만들었지만 받은 월드를 넣지 못했어요: $($_.Exception.Message)`n`n[백업 / 월드 관리] → [받은 백업 넣기]로 다시 해 보세요." 'Error'
+        return
+    }
+    finally { $form.Enabled = $true; $form.Cursor = 'Default' }
+    Show-SrvInfo
+    if (-not $script:installProc) { $lblStage.Text = "받은 백업으로 '$($imp.name)' 서버를 만들었어요." }
+    Show-Msg ((@("받은 백업으로 '$($imp.name)' 서버를 만들었어요.") + @($lines) + (Get-TakeoverSteps)) -join "`n")
+}
+$btnFromBackup.Add_Click({ Start-ImportFromBackup })
+$tip.SetToolTip($btnFromBackup, '다른 사람이 보내 준 백업 파일(.zip)로 같은 서버를 이 컴퓨터에 만들어요. 모드팩, 추가 모드, 월드, 화이트리스트까지 똑같이 맞춰요.')
+
 function Show-Backups {
     $d = Get-SelDir; if (-not $d) { return }
     $f = New-Object Windows.Forms.Form
-    $f.Text = "백업 / 월드 관리 - $($lstSrv.SelectedItem)"; $f.Size = New-Object Drawing.Size(760, 610); $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.Font = $font
+    $f.Text = "백업 / 월드 관리 - $($lstSrv.SelectedItem)"; $f.Size = New-Object Drawing.Size(760, 630); $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.Font = $font
     $l1 = New-Ctl Label 15 12 720 40 "서버를 끌 때마다(auto_, 최근 $($AutoBackupKeep)개), 켜 둔 동안에는 $($LiveBackupHours)시간마다(live_, 최근 $($LiveBackupKeep)개) 자동으로 백업해요.`n[지금 백업하기] 말고는 서버를 끈 상태에서만 돼요. 되돌리기 전에 지금 월드도 한 번 더 백업해요."
     $lv = New-Object Windows.Forms.ListView; $lv.Location = New-Object Drawing.Point(15, 58); $lv.Size = New-Object Drawing.Size(715, 280); $lv.View = 'Details'; $lv.FullRowSelect = $true; $lv.Font = $font
     [void]$lv.Columns.Add('백업', 360); [void]$lv.Columns.Add('만든 때', 190); [void]$lv.Columns.Add('크기', 140)
     $bNow = New-Ctl Button 15 348 230 38 '지금 백업하기'
     $bRestore = New-Ctl Button 255 348 230 38 '선택한 백업으로 되돌리기'
     $bOpen = New-Ctl Button 495 348 235 38 '백업 폴더 열기'
-    $bReset = New-Ctl Button 15 400 300 38 '월드 새로 만들기 (처음부터)'
+    $bImport = New-Ctl Button 15 394 230 38 '받은 백업 넣기'
+    $bImport.BackColor = [Drawing.Color]::FromArgb(255, 241, 204)
+    $bReset = New-Ctl Button 255 394 230 38 '월드 새로 만들기 (처음부터)'
     $bReset.ForeColor = [Drawing.Color]::Firebrick
-    $lst = New-Ctl Label 330 395 400 75 ''; $lst.ForeColor = [Drawing.Color]::DarkGreen
-    $lCopy = New-Ctl Label 15 482 455 64 ''
-    $bCopy = New-Ctl Button 480 482 160 36 '복사할 곳 고르기'
-    $bCopyOff = New-Ctl Button 650 482 80 36 '끄기'
-    $f.Controls.AddRange(@($l1, $lv, $bNow, $bRestore, $bOpen, $bReset, $lst, $lCopy, $bCopy, $bCopyOff))
+    $lst = New-Ctl Label 15 440 715 44 ''; $lst.ForeColor = [Drawing.Color]::DarkGreen
+    $lCopy = New-Ctl Label 15 494 455 64 ''
+    $bCopy = New-Ctl Button 480 494 160 36 '복사할 곳 고르기'
+    $bCopyOff = New-Ctl Button 650 494 80 36 '끄기'
+    $f.Controls.AddRange(@($l1, $lv, $bNow, $bRestore, $bOpen, $bImport, $bReset, $lst, $lCopy, $bCopy, $bCopyOff))
+    $tt = New-Object Windows.Forms.ToolTip
+    $tt.SetToolTip($bImport, '다른 컴퓨터에서 만든 백업 파일(.zip)의 월드를 이 서버에 넣어요. 화이트리스트와 추가 모드도 맞춰요.')
     $showCopy = {
         $c = Get-BackupCopyDir $d
         if ($c) { $lCopy.ForeColor = [Drawing.Color]::DarkGreen; $lCopy.Text = "PC 밖에도 복사: 켜짐 (새 백업마다, 최근 $($BackupCopyKeep)개)`n$c" }
@@ -2906,6 +3305,15 @@ function Show-Backups {
             }
             catch { Show-Msg "되돌리지 못했어요: $($_.Exception.Message)" 'Error'; $lst.Text = '' }
             finally { $f.Cursor = 'Default'; & $fill }
+        })
+    $bImport.Add_Click({
+            if (-not (Assert-ServerOff $d)) { return }
+            $path = Select-BackupZip $f; if (-not $path) { return }
+            $info = Read-ReceivedBackup $path; if (-not $info) { return }
+            $lst.Text = '받은 백업을 넣는 중... (월드가 크면 몇 분 걸려요)'; Pump 50
+            $ok = Import-IntoServer $d $path $info $f
+            $lst.Text = ''; if ($ok) { $lst.Text = "받은 백업의 월드를 넣었어요: $(Split-Path $path -Leaf)" }
+            & $fill
         })
     $bOpen.Add_Click({ $bd = Join-Path $d 'backups'; New-Item -ItemType Directory -Force $bd | Out-Null; Start-Process explorer.exe "`"$bd`"" })
     $bReset.Add_Click({

@@ -1,11 +1,11 @@
 {
-    "version":  "1.0.24",
+    "version":  "1.0.25",
     "date":  "2026-11-13",
-    "notes":  "친구 서버에 들어갈 때 \u0027Connection timed out: getsockopt\u0027로 접속이 안 되던 문제를 고쳤어요. [▶ 게임 켜기]를 한 번 더 누르면 적용돼요.",
+    "notes":  "방장이 못 오는 날, 친구가 방장의 백업 파일로 같은 서버를 대신 열 수 있어요. [새 서버 만들기] → [받은 백업으로 서버 만들기]를 누르면 모드팩, 추가 모드, 월드, 화이트리스트, 설정까지 똑같이 맞춰요. 다시 원래 방장이 열 때는 [백업 / 월드 관리] → [받은 백업 넣기]로 넣어요. (방장도 이 버전으로 업데이트한 뒤 만든 백업부터 돼요)",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "f8c05475901b876e4fab5fb84b56191f2b5ff68ee22b788950fcbb0f44494c65"
+                      "sha256":  "f66b1eee29a6d20ab8153e3987c606080668db86edd9af31aaf9ba9fe02e639b"
                   },
                   {
                       "path":  "install.ps1",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "c433e7b13d0cbb5e3ba1c894b16e64a5afa764a202b95e23b3ccfa916f615c87"
+                      "sha256":  "f8f839a57e221ad73b1ae5df49d79623b7d9822af7f5cec3a0184a5a031a3b10"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "34ab2b5d7491e4217feb48feaa50db217eb5340811abb8d06313f265d317f9d9"
+                      "sha256":  "83af3e6a50b964f3c8dd7b2bc54adaed58baf73b5f5860491ce0e0fa432a5dce"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "cb0517e4a9f5d8deb9d4f8414aa0bcf38001daa568b39f2d1ec7ab504b64b76b"
+                     "sha256":  "ce05f072ad633d88e866ae6cb79c63484d9cabe3be1edce8a1202dc5ee5db924"
                  }
 }
