@@ -529,9 +529,12 @@ function Set-LauncherProfile([string]$mcDir, [string]$key, [string]$label, [stri
     $now = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
     $created = $now; $old = $j.profiles.PSObject.Properties[$key]; if ($old -and $old.Value.created) { $created = $old.Value.created }
     # "lastUsed = now" puts it at the top of the launcher's installation list
+    # preferIPv6Addresses=false: the launcher passes "=system", which on many PCs picks a Playit tunnel's IPv6
+    # address first, and that one can time out ("Connection timed out: getsockopt") while its IPv4 one works.
+    # Our javaArgs come after the launcher's own -D on the command line, so this one wins; IPv6-only still works.
     $prof = [pscustomobject][ordered]@{
         name = $label; type = 'custom'; created = $created; lastUsed = $now; lastVersionId = $vid; gameDir = $gameDir; icon = 'Crafting_Table'
-        javaArgs = "-Xmx${ramGB}G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M"
+        javaArgs = "-Xmx${ramGB}G -Djava.net.preferIPv6Addresses=false -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M"
     }
     $j.profiles | Add-Member -NotePropertyName $key -NotePropertyValue $prof -Force
     Save-LauncherProfiles $mcDir $j

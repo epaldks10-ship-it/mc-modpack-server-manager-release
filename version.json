@@ -1,19 +1,19 @@
 {
-    "version":  "1.0.23",
-    "date":  "2026-10-27",
-    "notes":  "Forge를 올리기 직전에 월드를 자동으로 백업해요. 게임이 모드들이 동시에 켜지다 부딪힌 우연한 오류로 멈췄을 때는 게임을 다시 만들지 않고, 다시 켜면 된다고 알려 줘요.",
+    "version":  "1.0.24",
+    "date":  "2026-11-13",
+    "notes":  "친구 서버에 들어갈 때 \u0027Connection timed out: getsockopt\u0027로 접속이 안 되던 문제를 고쳤어요. [▶ 게임 켜기]를 한 번 더 누르면 적용돼요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "049565c9ab411cb44be4e8ab3c5832cc3cdfb6e7e253dc60f5991b73330bcf15"
+                      "sha256":  "f8c05475901b876e4fab5fb84b56191f2b5ff68ee22b788950fcbb0f44494c65"
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "469ebf5debcecfd5f51a3da4d3e246f9fccf5cfed004bf28ff9e09896c45ce37"
+                      "sha256":  "79ef8be1d833d58dbaa93c7b52d55164a21d8c285e694e16cf91a14e65740db6"
                   },
                   {
                       "path":  "packs.json",
-                      "sha256":  "2204da0fdbf39cdb71c80e4336839567ba6469e2186c3488e400a35de66c440d"
+                      "sha256":  "695940955730de8fce643accd02bea601d96dd3e973042bdb539d22b7f2b10df"
                   },
                   {
                       "path":  "client-only-mods.txt",
@@ -21,15 +21,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "5f4ed4a300dc9478b9fc3456dff3f9a0c7ea409ed4b1e5a6454b57335dc419b5"
+                      "sha256":  "c433e7b13d0cbb5e3ba1c894b16e64a5afa764a202b95e23b3ccfa916f615c87"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "fb422c3a80181b0ddaa4c7ff6e4a8d523ddecfe6df94de8d86fe3202521e93d5"
+                      "sha256":  "34ab2b5d7491e4217feb48feaa50db217eb5340811abb8d06313f265d317f9d9"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "83975b26a7bf350b845e5ed718de9f6c54c3d97563e570fdfe0db0e7eb40a272"
+                     "sha256":  "cb0517e4a9f5d8deb9d4f8414aa0bcf38001daa568b39f2d1ec7ab504b64b76b"
                  }
 }
