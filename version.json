@@ -1,11 +1,11 @@
 {
-    "version":  "1.0.25",
-    "date":  "2026-11-13",
-    "notes":  "방장이 못 오는 날, 친구가 방장의 백업 파일로 같은 서버를 대신 열 수 있어요. [새 서버 만들기] → [받은 백업으로 서버 만들기]를 누르면 모드팩, 추가 모드, 월드, 화이트리스트, 설정까지 똑같이 맞춰요. 다시 원래 방장이 열 때는 [백업 / 월드 관리] → [받은 백업 넣기]로 넣어요. (방장도 이 버전으로 업데이트한 뒤 만든 백업부터 돼요)",
+    "version":  "1.0.26",
+    "date":  "2026-11-16",
+    "notes":  "친구가 서버에 못 들어갈 때 \u0027알 수 없는 호스트\u0027, \u0027시간 초과\u0027 같은 게임 오류가 왜 났는지, 어떻게 하면 되는지 프로그램이 한국어로 바로 알려 줘요. (이 프로그램이 켜져 있을 때) 방장 주소가 바뀌어 옛 주소로 접속하는 경우도 알아채요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "f66b1eee29a6d20ab8153e3987c606080668db86edd9af31aaf9ba9fe02e639b"
+                      "sha256":  "72f804ff91019255b8aa92ccc66b13282eb812775ede906e09d3c3e162bdcffb"
                   },
                   {
                       "path":  "install.ps1",
@@ -25,11 +25,11 @@
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "83af3e6a50b964f3c8dd7b2bc54adaed58baf73b5f5860491ce0e0fa432a5dce"
+                      "sha256":  "ec8849be9dbc5e8e3ed24e827ad14bfa8fae607b4cbb451a467f8a04b70b9fcb"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "ce05f072ad633d88e866ae6cb79c63484d9cabe3be1edce8a1202dc5ee5db924"
+                     "sha256":  "d2d23088d49dced4f0a98c093d1561d16dbf882feab188a2d1f14d8bff4ad497"
                  }
 }

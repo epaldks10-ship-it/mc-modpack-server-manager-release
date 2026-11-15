@@ -2509,6 +2509,120 @@ function Get-ServerDescription([string]$addr, [int]$timeoutMs = 5000) {
     catch { return $null }
     finally { $c.Close() }
 }
+function Get-AddressState([string]$addr) {
+    # Why the game would say "Unknown host" before the friend even tries:
+    #  ok       - the name leads somewhere
+    #  noip     - Playit knows the name but gives it no IP: the host's Playit isn't connected (its server/PC is off)
+    #  nxdomain - no such address at all (a typo, or the host's tunnel was deleted and remade)
+    #  localdns - public DNS finds it but this PC's DNS doesn't (an ISP or a filter blocking ply.gg)
+    #  unknown  - couldn't ask (no internet, no DnsClient)
+    $hostName = $addr; $port = ''
+    if ($addr -match '^(.+):(\d{1,5})$') { $hostName = $Matches[1]; $port = $Matches[2] }
+    if ($hostName -match '^\d{1,3}(\.\d{1,3}){3}$' -or $hostName -eq 'localhost') { return 'ok' }
+    if ($hostName -notmatch '^[A-Za-z0-9.-]+$' -or -not (Get-Command Resolve-DnsName -ErrorAction SilentlyContinue)) { return 'unknown' }
+    $ask = {
+        param([string]$server)
+        $p = @{ DnsOnly = $true; QuickTimeout = $true; ErrorAction = 'Stop' }; if ($server) { $p.Server = $server }
+        $st = 'none'
+        try { if (@(Resolve-DnsName $hostName -Type A @p | Where-Object { $_.Section -eq 'Answer' -and $_.Type -in 'A', 'AAAA', 'CNAME' }).Count) { return 'ok' } }
+        catch { if ("$($_.FullyQualifiedErrorId) $($_.Exception.Message)" -match 'RCODE_NAME_ERROR|does not exist|존재하지 않') { $st = 'nx' } else { return 'err' } }
+        if (-not $port) {   # joinmc.link style addresses can live on an SRV record alone
+            try { if (@(Resolve-DnsName "_minecraft._tcp.$hostName" -Type SRV @p | Where-Object { $_.Type -eq 'SRV' }).Count) { return 'ok' } } catch { }
+        }
+        return $st
+    }
+    $here = & $ask ''
+    if ($here -eq 'ok') { return 'ok' }
+    $pub = & $ask '1.1.1.1'; if ($pub -eq 'err') { $pub = & $ask '8.8.8.8' }
+    if ($pub -eq 'ok') { return 'localdns' }
+    if ($pub -eq 'nx' -or ($pub -eq 'err' -and $here -eq 'nx')) { return 'nxdomain' }
+    if ($pub -eq 'none' -or ($pub -eq 'err' -and $here -eq 'none')) { return 'noip' }
+    return 'unknown'
+}
+function Get-AddressAdvice([string]$addr) {
+    # One paragraph for the friend, or '' when the address looks fine
+    switch (Get-AddressState $addr) {
+        'noip' { return "※ 지금은 방장 서버 주소($addr)로 들어갈 수 없어요. 이대로 접속하면 '알 수 없는 호스트'가 떠요.`n   방장 서버가 꺼져 있거나, 방장의 Playit 주소가 바뀌어서 이 주소가 옛날 주소일 수 있어요.`n   방장에게 서버를 켜 달라고 하고, 지금 주소(방장 프로그램의 'Playit: 실행 중' 아래 주소)를 물어보세요.`n   주소가 다르면 이 프로그램의 [친구 서버 들어가기] 탭에서 [서버 주소] 칸을 고치고 [▶ 설치하고 게임 켜기]를 누르면 돼요." }
+        'nxdomain' { return "※ 방장 서버 주소($addr)가 인터넷에 없어요. ('알 수 없는 호스트'가 떠요)`n   방장이 Playit 터널을 새로 만들어서 주소가 바뀌었을 수 있어요.`n   방장에게 새 초대 링크를 받아서 다시 붙여 넣어 주세요." }
+        'localdns' { return "※ 이 PC의 인터넷이 Playit 주소($addr)를 못 찾고 있어요. (다른 곳에서는 찾아져요)`n   통신사나 백신/공유기의 차단 기능이 ply.gg 를 막고 있을 수 있어요.`n   휴대폰 핫스팟으로 연결해 보거나, 차단 기능에서 ply.gg 를 허용해 주세요." }
+    }
+    return ''
+}
+# ---------------- the game's own connection errors, put into words ----------------
+# The game only says "알 수 없는 호스트" or "시간 초과"; its logs\latest.log says exactly why. While this program is open
+# it reads the new lines of every game folder's log and, when a connection fails, says what happened and what to do.
+$script:gameLogs = @{}        # log path -> @{ pos; made; addr; pending }
+$script:gameLogShown = @{}    # what was last explained and when, so retrying doesn't stack up windows
+$script:gameLogBusy = $false
+function Get-ConnectFailAdvice([string]$addr, [string]$why) {
+    $hostName = $addr -replace ',\s*\d+$', '' -replace ':\d+$', ''
+    $local = $hostName -in '127.0.0.1', 'localhost'
+    $head = "마인크래프트가 서버($hostName)에 들어가지 못했어요."
+    if ($why -match 'UnknownHost|unresolved|Name or service not known|No such host') {
+        $more = Get-AddressAdvice $hostName
+        if (-not $more) { $more = "※ 방금은 이 PC가 주소를 못 찾았는데, 지금 다시 보니 찾아져요. 잠깐 인터넷이 끊겼던 것 같아요.`n   마인크래프트에서 [서버 목록으로 돌아가기] → 다시 [서버 접속] 하세요." }
+        return "$head`n이유: 알 수 없는 호스트 (그런 주소를 찾을 수 없음)`n`n$more"
+    }
+    if ($why -match 'Connection refused') {
+        if ($local) { return "$head`n이유: 연결 거부`n`n※ 이 PC의 서버가 아직 안 켜졌어요. [내 서버] 탭에서 서버를 켜고, '친구들이 들어올 수 있어요'가 뜬 다음 접속하세요." }
+        return "$head`n이유: 연결 거부 (주소는 맞는데 서버가 받지 않음)`n`n※ 방장 PC의 Playit은 켜져 있는데 마인크래프트 서버가 꺼져 있거나 아직 켜지는 중이에요.`n   방장에게 서버가 다 켜졌는지 물어보고, 1~2분 뒤에 다시 [서버 접속] 하세요."
+    }
+    if ($why -match 'timed out') {
+        if ($local) { return "$head`n이유: 시간 초과`n`n※ 이 PC의 서버가 아직 켜지는 중이에요. 다 켜진 다음 다시 [서버 접속] 하세요." }
+        $v6 = ''; if ($why -match '/\[[0-9a-fA-F:]+\]:\d+') { $v6 = "`n`n※ 이번엔 IPv6 주소로 연결하다 막혔어요. 이 프로그램에서 [▶ 게임 켜기]로 게임을 다시 켜면 IPv4로 연결하게 고쳐져요." }
+        return "$head`n이유: 시간 초과 (주소는 찾았는데 아무도 대답하지 않음)`n`n※ 방장 서버나 Playit이 꺼져 있거나 끊겼을 때 이래요.`n   방장에게 서버가 켜져 있는지 물어보고, 켜져 있다면 방장이 서버를 껐다 다시 켜 보세요.$v6"
+    }
+    if ($why -match 'Network is unreachable|No route to host') { return "$head`n이유: 인터넷 연결 없음`n`n※ 이 PC의 인터넷이 끊겨 있어요. 인터넷을 확인하고 다시 [서버 접속] 하세요." }
+    $short = ($why -replace '^\S*?(Exception|Error):\s*', '').Trim(); if ($short.Length -gt 200) { $short = $short.Substring(0, 200) + '...' }
+    return "$head`n게임이 남긴 이유: $short`n`n※ 방장에게 이 내용을 그대로 보여 주세요."
+}
+function Show-TopMsg([string]$text) {
+    # Above the game window, which is usually in front by now
+    $top = New-Object Windows.Forms.Form; $top.TopMost = $true; $top.ShowInTaskbar = $false
+    try { [void][Windows.Forms.MessageBox]::Show($top, $text, '모드팩 서버 관리 - 접속 오류', 'OK', 'Warning') } finally { $top.Dispose() }
+}
+function Watch-GameLogs {
+    if ($script:gameLogBusy) { return }
+    $script:gameLogBusy = $true
+    try {
+        foreach ($dir in @(Get-ChildItem -LiteralPath $GameRoot -Directory -ErrorAction SilentlyContinue)) {
+            $p = Join-Path $dir.FullName 'logs\latest.log'
+            $fi = Get-Item -LiteralPath $p -ErrorAction SilentlyContinue; if (-not $fi) { continue }
+            $st = $script:gameLogs[$p]
+            if (-not $st) { $script:gameLogs[$p] = @{ pos = $fi.Length; made = $fi.CreationTimeUtc; addr = ''; pending = $false }; continue }   # old news: start from the end
+            if ($fi.CreationTimeUtc -ne $st.made -or $fi.Length -lt $st.pos) { $st.pos = 0; $st.made = $fi.CreationTimeUtc; $st.addr = ''; $st.pending = $false }   # the game started again
+            if ($fi.Length -eq $st.pos) { continue }
+            $text = ''
+            try {
+                $fs = [IO.File]::Open($p, 'Open', 'Read', 'ReadWrite,Delete')
+                try { [void]$fs.Seek($st.pos, 'Begin'); $buf = New-Object byte[] ([Math]::Min(4MB, $fi.Length - $st.pos)); $n = $fs.Read($buf, 0, $buf.Length) } finally { $fs.Close() }
+                $end = [Array]::LastIndexOf($buf, [byte]10, $n - 1); if ($end -lt 0) { continue }   # only whole lines
+                $text = [Text.Encoding]::UTF8.GetString($buf, 0, $end + 1); $st.pos += $end + 1
+            }
+            catch { continue }
+            foreach ($line in ($text -split "`r?`n")) {
+                $msg = ''
+                if ($line -match 'Connecting to (\S+?),\s*(\d+)\s*$') {
+                    $st.addr = $Matches[1]; $st.pending = $false
+                    # An unknown host leaves nothing else in latest.log (the game notes it at debug level only),
+                    # so look the name up right now, the moment the friend presses [서버 접속]
+                    $more = Get-AddressAdvice $st.addr
+                    if ($more) { $msg = "마인크래프트가 서버($($st.addr))에 들어가지 못했어요.`n이유: 알 수 없는 호스트 (그런 주소를 찾을 수 없음)`n`n$more" }
+                }
+                elseif ($line -match "Couldn't connect to server") { $st.pending = $true }
+                elseif ($st.pending -and $line -match '\S') { $st.pending = $false; $msg = Get-ConnectFailAdvice $st.addr $line.Trim() }
+                if (-not $msg) { continue }
+                if ($dir.Name -like 'join-*') { $txtJoinLog.AppendText("==> 접속 오류`r`n" + ($msg -replace "`n", "`r`n") + "`r`n") }
+                $kind = "$($dir.Name)|$(($msg -split "`n")[0..1] -join '|')"   # same game, same address, same reason
+                $last = $script:gameLogShown[$kind]
+                if ($last -and ((Get-Date) - $last).TotalSeconds -lt 90) { continue }   # the same failure again: the log has it, no new window
+                $script:gameLogShown[$kind] = Get-Date
+                Show-TopMsg $msg
+            }
+        }
+    }
+    finally { $script:gameLogBusy = $false }
+}
 function Find-HostCode([string]$addr, [string]$name) {
     # The host's current invitation, read from its running server; $null when it is off or older than 1.0.13
     $desc = Get-ServerDescription $addr; if (-not $desc) { return $null }
@@ -3631,7 +3745,12 @@ function Complete-GameJob([bool]$ok) {
         $lblStage.Text = "게임 준비 완료! 런처에서 '$($m.profileName)' → [플레이] → 멀티플레이 → '$($m.serverEntry)'"
         if (-not $script:srv) { $steps += "`n`n※ 지금 서버가 꺼져 있어요. 게임이 켜지는 동안 [▶ 친구랑 하기] 또는 [▶ 혼자 하기]로 서버도 켜 주세요." }
     }
-    else { $lblJoinWork.ForeColor = [Drawing.Color]::DarkGreen; $lblJoinWork.Text = "준비 완료! 런처에서 '$($m.profileName)' → [플레이] → 멀티플레이 → '$($m.serverEntry)'"; Update-JoinedList }
+    else {
+        $lblJoinWork.ForeColor = [Drawing.Color]::DarkGreen; $lblJoinWork.Text = "준비 완료! 런처에서 '$($m.profileName)' → [플레이] → 멀티플레이 → '$($m.serverEntry)'"; Update-JoinedList
+        # The game itself only says "Unknown host"; tell the friend why before they get there
+        $advice = Get-AddressAdvice "$($m.address)"
+        if ($advice) { $txtJoinLog.AppendText(($advice -replace "`n", "`r`n") + "`r`n"); $steps += "`n`n$advice" }
+    }
     if ($m.PSObject.Properties['transientCrash'] -and $m.transientCrash) { $steps += "`n`n※ 지난번에 게임이 멈춘 건 모드들이 동시에 켜지다 부딪힌 우연한 오류였어요. 고칠 건 없어서 게임은 그대로 두었어요. 다시 켜면 돼요." }
     if ([int]$m.ramGB -lt 4) { $steps += "`n`n※ 이 컴퓨터 램이 넉넉하지 않아서 게임 램을 $($m.ramGB)GB로 잡았어요. 버벅이면 다른 프로그램을 닫아 주세요." }
     Show-Msg "게임 준비가 끝났어요!`n`n$steps"
@@ -4165,6 +4284,7 @@ $uiTimer.Add_Tick({
         Resume-Playit
         $script:tick++
         if ($script:tick % 12 -eq 0) { Update-PlayitLabel }
+        if ($script:tick % 8 -eq 4) { Watch-GameLogs }   # every 2 seconds: explain a failed connection while the error is on screen
         # Every 10 minutes; every 30 seconds while there is no address yet (the tunnel is often made after the key is saved)
         if (($script:tick -eq 8 -or $script:tick % 2400 -eq 0 -or ($script:tick % 120 -eq 0 -and -not (Get-PlayitAddress))) -and (Get-PlayitKey)) { [void](Sync-PlayitAddress) }
     })
