@@ -1280,17 +1280,27 @@ function Set-LightOptions([string]$opt) {
 }
 function Add-PerformanceMods([string]$mods, $li) {
     # A game built from a server pack misses the pack's client-side frame-rate mods; EntityCulling is the big, safe one
+    Add-ModrinthClientMods $mods $li @(@{ slug = 'entityculling'; id = 'entityculling'; msg = '프레임을 올려 주는 모드를 넣었어요' })
+}
+function Add-KoreanChat([string]$mods, $li) {
+    # Korean Chat Patch types Hangul itself instead of through the Windows IME, so after chatting in Korean
+    # W/A/S/D move again without pressing 한/영 first. Client-only (no server needs it), every pack gets it.
+    Add-ModrinthClientMods $mods $li @(@{ slug = 'korean-chat-patch'; id = 'koreanpatch'; msg = '한글 채팅 모드를 넣었어요 (채팅 후 한/영 안 바꿔도 움직여요)' })
+}
+function Add-ModrinthClientMods([string]$mods, $li, $wanted) {
+    # Each wanted mod comes from Modrinth for this loader and Minecraft version, unless the pack already has it;
+    # a mod with no matching release, or a failed download, is skipped (the game works without it)
     $have = @{}
     foreach ($jar in @(Get-ChildItem -LiteralPath $mods -Filter '*.jar' -File)) {
         $z = $null; try { $z = [IO.Compression.ZipFile]::OpenRead($jar.FullName); foreach ($i in (Get-JarModInfo $z $li.loader).ids) { $have[$i] = $true } } catch { } finally { if ($z) { $z.Dispose() } }
     }
-    foreach ($w in @(@{ slug = 'entityculling'; id = 'entityculling' })) {
+    foreach ($w in @($wanted)) {
         if ($have.ContainsKey($w.id)) { continue }
         $q = '?loaders=' + [uri]::EscapeDataString("[`"$($li.loader)`"]") + '&game_versions=' + [uri]::EscapeDataString("[`"$($li.mc)`"]")
         try { $v = @(Invoke-RestMethod "https://api.modrinth.com/v2/project/$($w.slug)/version$q" | ForEach-Object { $_ }) | Where-Object { $_.version_type -eq 'release' } | Select-Object -First 1 } catch { continue }
         if (-not $v) { continue }
         $f = $v.files | Where-Object primary | Select-Object -First 1; if (-not $f) { $f = $v.files[0] }
-        try { Get-Download $f.url (Join-Path $mods $f.filename) -Sha1 $f.hashes.sha1; Info "프레임을 올려 주는 모드를 넣었어요: $($f.filename)" } catch { }
+        try { Get-Download $f.url (Join-Path $mods $f.filename) -Sha1 $f.hashes.sha1; Info "$($w.msg): $($f.filename)" } catch { }
     }
 }
 
@@ -1325,7 +1335,7 @@ function Install-Client($pack) {
     if ($minLoader -notmatch $LoaderVersionPattern) { $minLoader = '' }
     if ($minLoader) { $sigSrc += "|loader=$minLoader" }
     # Bumped whenever the way the game folder is built changes, so existing game folders get rebuilt once
-    $sigSrc = "build7|$sigSrc"
+    $sigSrc = "build8|$sigSrc"   # build8: Korean Chat Patch
     $sha = [Security.Cryptography.SHA256]::Create()
     $sig = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($sigSrc)) | ForEach-Object { $_.ToString('x2') })
 
@@ -1374,6 +1384,7 @@ function Install-Client($pack) {
         Add-MissingClientDeps (Join-Path $script:tmp 'mods') $li
         Add-ClientOnlyRequired (Join-Path $script:tmp 'mods') $li
         if ($pack.source -ne 'modrinth') { Add-PerformanceMods (Join-Path $script:tmp 'mods') $li }
+        Add-KoreanChat (Join-Path $script:tmp 'mods') $li
         $offList = @(Repair-ModCrash $script:tmp $crash $baseJars $offList $li)
 
         Step '게임 폴더에 넣는 중'

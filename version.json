@@ -1,19 +1,23 @@
 {
-    "version":  "1.0.26",
-    "date":  "2026-11-16",
-    "notes":  "친구가 서버에 못 들어갈 때 \u0027알 수 없는 호스트\u0027, \u0027시간 초과\u0027 같은 게임 오류가 왜 났는지, 어떻게 하면 되는지 프로그램이 한국어로 바로 알려 줘요. (이 프로그램이 켜져 있을 때) 방장 주소가 바뀌어 옛 주소로 접속하는 경우도 알아채요.",
+    "version":  "1.0.27",
+    "date":  "2026-11-21",
+    "notes":  "PC를 꺼도 서버를 열어 둘 수 있게, 서버를 내 PC와 호스팅(위키드, exaroton, 다른 호스팅) 사이에서 옮길 수 있어요. 메인 화면 오른쪽 위 [서버 위치] 버튼을 눌러 보세요. 그리고 친구 게임에 한국어 채팅 패치가 자동으로 들어가서, 한글로 채팅한 뒤에도 한/영을 안 눌러도 W/A/S/D로 바로 움직여요.",
     "files":  [
                   {
                       "path":  "manager.ps1",
-                      "sha256":  "72f804ff91019255b8aa92ccc66b13282eb812775ede906e09d3c3e162bdcffb"
+                      "sha256":  "92376bf338062dddff8b96b5c717270cb51247ccd989d8af3fa1e03c03005f43"
                   },
                   {
                       "path":  "install.ps1",
-                      "sha256":  "79ef8be1d833d58dbaa93c7b52d55164a21d8c285e694e16cf91a14e65740db6"
+                      "sha256":  "c4a29d7480eb3b2945c2aff12227b13426a57a41a60e98e66858c180f61cf665"
+                  },
+                  {
+                      "path":  "hosting.ps1",
+                      "sha256":  "72bb8f0eebafb713102e990fa5c953d252a9aa0ea3b0fc256e8ea636e6cebb52"
                   },
                   {
                       "path":  "packs.json",
-                      "sha256":  "695940955730de8fce643accd02bea601d96dd3e973042bdb539d22b7f2b10df"
+                      "sha256":  "2204da0fdbf39cdb71c80e4336839567ba6469e2186c3488e400a35de66c440d"
                   },
                   {
                       "path":  "client-only-mods.txt",
@@ -21,15 +25,15 @@
                   },
                   {
                       "path":  "manual.html",
-                      "sha256":  "f8f839a57e221ad73b1ae5df49d79623b7d9822af7f5cec3a0184a5a031a3b10"
+                      "sha256":  "538f6bc64ed0fad4bea5d87b6df81a3d5690ec407bf4165101354695164ec222"
                   },
                   {
                       "path":  "version.txt",
-                      "sha256":  "ec8849be9dbc5e8e3ed24e827ad14bfa8fae607b4cbb451a467f8a04b70b9fcb"
+                      "sha256":  "b4ca9bba7f92fc9ac367b424c36b20f7f7413389f1c86d44c1e748533b68a4a1"
                   }
               ],
     "launcher":  {
                      "path":  "launcher.exe",
-                     "sha256":  "d2d23088d49dced4f0a98c093d1561d16dbf882feab188a2d1f14d8bff4ad497"
+                     "sha256":  "8d0da4dfe8142cc39d188f7473cb7c853715753375573ce4d31545d3779b7d2f"
                  }
 }

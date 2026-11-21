@@ -137,6 +137,17 @@ Add-Type -AssemblyName System.Security
 $KeyEntropy = [Text.Encoding]::UTF8.GetBytes('mcsm-playit')
 $PlayitLog = Join-Path $PlayitDir 'playit.log'
 $PlayitAddrFile = Join-Path $PlayitDir 'address.txt'          # the address friends type in; not a secret
+# A server can also run at a hosting service (exaroton through its API, any other by uploading a zip by hand)
+$ExDir = Join-Path $Prog 'exaroton'
+$ExKeyFile = Join-Path $ExDir 'api-key.dpapi'                 # encrypted like the Playit key; hosting.ps1 reads it too
+$ExKeyEntropy = [Text.Encoding]::UTF8.GetBytes('mcsm-exaroton')
+$ExApi = 'https://api.exaroton.com/v1'; if ($env:MCSM_EXAROTON_API) { $ExApi = $env:MCSM_EXAROTON_API.TrimEnd('/') }
+# Wicked (teamwicked.me): Pterodactyl panel, client API key from 계정 → API
+$PtDir = Join-Path $Prog 'wicked'
+$PtKeyFile = Join-Path $PtDir 'api-key.dpapi'
+$PtKeyEntropy = [Text.Encoding]::UTF8.GetBytes('mcsm-wicked')
+$PtApi = 'https://panel.teamwicked.me'; if ($env:MCSM_WICKED_API) { $PtApi = $env:MCSM_WICKED_API.TrimEnd('/') }
+$HostingOutDir = Join-Path $Root '호스팅_올릴파일'
 $Cp949 = [Text.Encoding]::GetEncoding(949)
 $Utf8 = New-Object Text.UTF8Encoding($false)
 # Forge/NeoForge versions that may go into install.ps1's command line (same rule as install.ps1)
@@ -146,7 +157,7 @@ New-Item -ItemType Directory -Force $ServersDir | Out-Null
 # ---------------- program self-update from the public release repo ----------------
 # Development happens in a private repo; only releases are pushed here (see _dev\release.ps1).
 $UpdateBase = 'https://raw.githubusercontent.com/epaldks10-ship-it/mc-modpack-server-manager-release/main'
-$UpdatableFiles = @('manager.ps1', 'install.ps1', 'packs.json', 'client-only-mods.txt', 'manual.html', 'version.txt')
+$UpdatableFiles = @('manager.ps1', 'install.ps1', 'hosting.ps1', 'packs.json', 'client-only-mods.txt', 'manual.html', 'version.txt')
 # Later releases may add program files; the manifest is signed, so any plain file name of these kinds is accepted
 function Test-UpdatableFile([string]$path) { return ($path -in $UpdatableFiles) -or ($path -match '^[A-Za-z0-9_-]+\.(ps1|json|txt|html)$') }
 $AppVersion = '0.0.0'
@@ -686,6 +697,8 @@ $btnFolder = New-Ctl Button 10 498 235 34 '서버 폴더 열기'
 $lblPlayit = New-Ctl Label 10 535 235 58 ''
 $btnCopyAddr = New-Ctl Button 10 594 235 30 '친구에게 줄 주소 복사'
 
+$btnWhere = New-Ctl Button 260 3 420 30 '서버 위치: 내 PC   (호스팅으로 옮기기)'
+$lblWhere = New-Ctl Label 686 9 269 22 ''; $lblWhere.ForeColor = [Drawing.Color]::DimGray; $lblWhere.AutoEllipsis = $true   # the whole address is in its tooltip and [친구에게 줄 주소 복사]
 $lblState = New-Ctl Label 260 35 695 48 '● 꺼짐'
 $lblState.Font = $big; $lblState.ForeColor = [Drawing.Color]::White; $lblState.BackColor = [Drawing.Color]::Gray; $lblState.TextAlign = 'MiddleLeft'
 $prg = New-Object Windows.Forms.ProgressBar; $prg.Location = New-Object Drawing.Point(260, 88); $prg.Size = New-Object Drawing.Size(695, 18); $prg.Style = 'Continuous'
@@ -714,7 +727,8 @@ $tip.SetToolTip($btnPacks, '리소스팩을 넣어요. 내 게임에 들어가�
 $tip.SetToolTip($btnSrvUp, '고른 서버를 목록에서 위로 옮겨요.')
 $tip.SetToolTip($btnSrvDown, '고른 서버를 목록에서 아래로 옮겨요.')
 $tip.SetToolTip($btnSrvDel, '고른 서버를 지워요. (휴지통으로 옮겨서 되살릴 수 있어요)')
-$tabMy.Controls.AddRange(@($lblMy, $btnSrvUp, $btnSrvDown, $btnSrvDel, $lstSrv, $btnPlay, $btnSettings, $btnFolder, $btnMods, $btnPacks, $btnInvite, $btnFriend, $btnBackup, $btnPlayit, $btnSecurity, $btnUpdate, $lblPlayit, $btnCopyAddr,
+$tip.SetToolTip($btnWhere, '서버를 호스팅으로 옮기면 이 PC를 꺼도 친구들이 들어올 수 있어요. 언제든 다시 내 PC로 되돌릴 수 있어요.')
+$tabMy.Controls.AddRange(@($btnWhere, $lblWhere, $lblMy,$btnSrvUp, $btnSrvDown, $btnSrvDel, $lstSrv, $btnPlay, $btnSettings, $btnFolder, $btnMods, $btnPacks, $btnInvite, $btnFriend, $btnBackup, $btnPlayit, $btnSecurity, $btnUpdate, $lblPlayit, $btnCopyAddr,
         $lblState, $prg, $lblStage, $lblSrvInfo, $lblRamSrv, $numRamSrv, $btnRamSrv, $btnStart, $btnLocal, $btnStop, $btnAddFriend, $lblPlayers, $txtConsole, $txtCmd, $btnSend))
 
 $ServerOrderFile = Join-Path $Prog 'server-order.json'   # the order the user put the list in (not replaced by updates)
@@ -803,6 +817,7 @@ function Show-SrvInfo {
     else { $lblSrvInfo.Text = $lstSrv.SelectedItem }
     $numRamSrv.Value = [Math]::Min($numRamSrv.Maximum, [Math]::Max($numRamSrv.Minimum, (Get-ServerRam $d)))
     Update-UpdateButton
+    Update-WhereUi
 }
 
 function Get-ServerRam($d) {
@@ -884,6 +899,8 @@ function Start-Server([switch]$Local) {
     $d = Get-SelDir
     if (-not $d) { Show-Msg '왼쪽 목록에서 서버를 고르세요.'; return }
     if ($script:srv) { Show-Msg '이미 켜져 있는 서버가 있어요.'; return }
+    # The world lives at the hosting now: starting this copy too would split it in two
+    if (Test-Hosted $d) { Start-HostedServer $d -Local:$Local; return }
     if ($script:installProc) { Show-Msg '설치나 업데이트가 끝난 다음에 켜 주세요.'; return }
     if ($script:autoBk) { Show-Msg '자동 백업이 끝난 다음에 켜 주세요. (잠깐이면 돼요)'; return }
     if (Test-PortBusy) {
@@ -935,13 +952,14 @@ function Start-Server([switch]$Local) {
         bkSw = $null; playedSinceBk = $false; lag = New-Object System.Collections.Generic.List[datetime]; lagHint = [datetime]::MinValue
         wlNames = @{}; bounces = New-Object System.Collections.Generic.List[datetime]; strangers = @{}; declined = @{}; attack = $null; attackSaid = [datetime]::MinValue; quiet = $false; secLogged = 0
     }
-    $lstSrv.Enabled = $false; $btnStart.Enabled = $false; $btnLocal.Enabled = $false; $btnStop.Enabled = $true; $btnMods.Enabled = $false; $btnUpdate.Enabled = $false; $btnRamSrv.Enabled = $false
+    $lstSrv.Enabled = $false; $btnStart.Enabled = $false; $btnLocal.Enabled = $false; $btnStop.Enabled = $true; $btnMods.Enabled = $false; $btnUpdate.Enabled = $false; $btnRamSrv.Enabled = $false; $btnWhere.Enabled = $false
     $prg.Value = 0; $lblPlayers.Text = '접속 0명'
     $mode = '친구랑 하기'; if ($Local) { $mode = '혼자 하기' }
     Set-State "● 켜는 중...  ($mode, 다 켜질 때까지 기다려 주세요)" ([Drawing.Color]::DarkOrange)
 }
 
 function Stop-Server([switch]$NoAsk) {
+    if (-not $script:srv -and -not $NoAsk -and (Test-Hosted (Get-SelDir))) { Stop-HostedServer (Get-SelDir); return }
     $s = $script:srv; if (-not $s -or $s.stopping) { return }
     if (-not $s.done -and $s.stage -lt 3) {
         # Still loading mods: no world is open yet, so ending the process is safe
@@ -1103,7 +1121,7 @@ function Complete-Server {
     $s = $script:srv; $script:srv = $null
     $code = $s.proc.Code
     Stop-LiveBackup '서버가 꺼져서 켜진 채로 하던 백업은 멈췄어요.'
-    $lstSrv.Enabled = $true; $btnStart.Enabled = $true; $btnLocal.Enabled = $true; $btnStop.Enabled = $false; $btnMods.Enabled = $true; $btnRamSrv.Enabled = $true
+    $lstSrv.Enabled = $true; $btnStart.Enabled = $true; $btnLocal.Enabled = $true; $btnStop.Enabled = $false; $btnMods.Enabled = $true; $btnRamSrv.Enabled = $true; $btnWhere.Enabled = $true
     # No server, no reason to keep a public address open
     $script:playitPausedUntil = $null
     if ($script:playit) { $script:playit.Kill(); $script:playit = $null }
@@ -1456,12 +1474,21 @@ function Read-ServerOutput {
     if (-not $s.proc.Running -and $s.proc.Lines.IsEmpty) { Complete-Server }
 }
 
-$btnUpdate.Add_Click({ Start-PackUpdate })
+$btnUpdate.Add_Click({
+        if (Test-Hosted (Get-SelDir)) {
+            Show-Msg ("이 서버의 월드는 지금 호스팅에 있어요.`n모드팩 업데이트는 이 PC에서 해야 해서, 순서가 이래요:`n`n" +
+                "1. [서버 위치] → 내 PC로 되돌리기`n2. [모드팩 업데이트 확인]으로 업데이트`n3. [서버 위치] → 다시 호스팅으로 옮기기`n`n" +
+                "친구들은 [▶ 게임 켜기]만 누르면 새 버전과 주소로 알아서 맞춰요.")
+            return
+        }
+        Start-PackUpdate
+    })
 $btnStart.Add_Click({ Start-Server })
 $btnLocal.Add_Click({ Start-Server -Local })
 $btnStop.Add_Click({ Stop-Server })
 $btnSend.Add_Click({
         $c = $txtCmd.Text.Trim().TrimStart('/'); if (-not $c) { return }
+        if (-not $script:srv -and (Test-Hosted (Get-SelDir))) { if (Send-HostedCommand (Get-SelDir) $c) { $txtCmd.Clear() }; return }
         if (-not $script:srv) { Show-Msg '서버가 켜져 있을 때만 명령을 보낼 수 있어요.'; return }
         if ($c -eq 'stop') { Stop-Server; $txtCmd.Clear(); return }
         if ($c -match '^/?op\s+([A-Za-z0-9_]{3,16})\s*$') {
@@ -1479,6 +1506,7 @@ $btnAddFriend.Add_Click({
         $nick = ("" + (Ask-Text "들여보낼 친구의 마인크래프트 닉네임을 입력하세요.`n(자바 에디션 계정 이름. 처음엔 내 닉네임부터 넣으세요)" $def)).Trim()
         if (-not $nick) { return }
         if ($nick -notmatch '^[A-Za-z0-9_]{3,16}$') { Show-Msg '마인크래프트 닉네임은 영어, 숫자, _ 로 3~16글자예요.'; return }
+        if (Test-Hosted $d) { Add-HostedWhitelist $d $nick; return }
         if (-not (Add-Whitelist $d $nick)) { Show-Msg "'$nick' 님은 서버가 다음에 켜질 때 자동으로 추가할게요." }
     })
 function Add-Whitelist($d, [string]$nick) {
@@ -1488,16 +1516,26 @@ function Add-Whitelist($d, [string]$nick) {
     return $false
 }
 $btnFolder.Add_Click({ $d = Get-SelDir; if ($d) { Start-Process explorer.exe "`"$d`"" } })
-$btnBackup.Add_Click({ Show-Backups })
+$btnBackup.Add_Click({
+        if (Test-Hosted (Get-SelDir)) {
+            # The copy here is from the day it moved: restoring or resetting it would go nowhere, or worse, come back later
+            Show-Msg ("이 서버의 월드는 지금 호스팅에 있어요. 이 PC에 있는 건 옮기던 날의 월드예요.`n`n" +
+                "- 백업: 호스팅 사이트의 백업(Backups) 기능을 쓰세요.`n- 이 PC에서 백업·되돌리기를 하려면 [서버 위치] → 내 PC로 되돌리기를 먼저 해 주세요.`n" +
+                "  (되돌릴 때 호스팅의 최신 월드를 가져오고, 그 전에 이 PC의 월드를 자동으로 백업해요)")
+            return
+        }
+        Show-Backups
+    })
 $btnFriend.Add_Click({ Show-FriendGuide })
 $btnInvite.Add_Click({
         $d = Get-SelDir; if (-not $d) { Show-Msg '왼쪽 목록에서 서버를 고르세요.'; return }
         $form.Cursor = 'WaitCursor'
         try { $lblStage.Text = Copy-Invite $d } finally { $form.Cursor = 'Default' }
     })
-$btnSettings.Add_Click({ Show-ServerSettings })
+$btnSettings.Add_Click({ $d = Get-SelDir; $s0 = Get-HostedSig $d; Show-ServerSettings; Sync-HostedAfter $d $s0 })
 $btnRamSrv.Add_Click({
         $d = Get-SelDir; if (-not $d) { return }
+        if (Test-Hosted $d) { Set-HostedRam $d ([int]$numRamSrv.Value); return }
         if (-not (Assert-ServerOff $d)) { return }
         Set-ServerRam $d ([int]$numRamSrv.Value)
         Show-SrvInfo
@@ -1691,7 +1729,7 @@ function Update-PlayitLabel {
 }
 $btnPlayit.Add_Click({ Show-PlayitSetup })
 $btnCopyAddr.Add_Click({
-        $a = Get-PlayitAddress
+        $a = Get-ServerAddress (Get-SelDir)
         if (-not $a) { Show-PlayitSetup; return }
         [Windows.Forms.Clipboard]::SetText($a)
         $lblStage.Text = "주소를 복사했어요: $a   → 카톡이나 디스코드에 붙여 넣어서 친구에게 보내 주세요."
@@ -1773,6 +1811,882 @@ function Show-PlayitSetup {
     [void]$f.ShowDialog($form)
 }
 
+# ---------------- where the server runs: this PC or a hosting service ----------------
+# hosting.json in the server folder: where = pc | host, provider = exaroton | other, address = what friends type,
+# exId/exName = the exaroton server, panel = the other hosting's page. Missing file = this PC.
+# The world is in one place at a time: while hosted, this PC's copy is the one from the day it moved and is never started.
+Add-Type -AssemblyName System.Net.Http
+function Get-Hosting($d) {
+    $h = $null; if ($d) { try { $h = Read-Json (Join-Path $d 'hosting.json') } catch { } }
+    if (-not $h) { $h = [pscustomobject]@{ where = 'pc' } }
+    foreach ($k in 'where', 'provider', 'address', 'exId', 'exName', 'ptId', 'panel', 'since') { if (-not $h.PSObject.Properties[$k]) { $h | Add-Member -NotePropertyName $k -NotePropertyValue '' } }
+    if ($h.where -ne 'host') { $h.where = 'pc' }
+    return $h
+}
+function Save-Hosting($d, $h) { Write-Json (Join-Path $d 'hosting.json') $h }
+# provider = exaroton | wicked | other. Wicked (teamwicked.me) has a Pterodactyl panel: with its API key and a server
+# picked (ptId) it works like exaroton; without, like 'other' (a zip uploaded by hand, the server port taken from its address)
+$WickedPanel = 'https://panel.teamwicked.me/'
+function Get-ProviderName($h) { switch ("$($h.provider)") { 'exaroton' { 'exaroton' } 'wicked' { '위키드' } default { '다른 호스팅' } } }
+function Test-ApiHosted($h) { return ($h.provider -eq 'exaroton' -and $h.exId) -or ($h.provider -eq 'wicked' -and $h.ptId) }
+function Get-HostingSite($h) { switch ("$($h.provider)") { 'exaroton' { 'exaroton 사이트' } 'wicked' { '위키드 패널' } default { '호스팅 사이트' } } }
+function Get-AddressPort([string]$a) { if ($a -match ':(\d{1,5})$') { return [int]$Matches[1] }; return 0 }
+function Stop-ServerAndWait($d, $lbl) {
+    # Before the files are packed: the server is stopped the normal way (world saved), then the automatic backup it starts is waited for
+    if (Test-ServerRunning $d) {
+        if (-not ($script:srv -and $script:srv.dir -eq $d)) { return (Assert-ServerOff $d) }
+        if (-not (Ask-YesNo "서버가 켜져 있어요. 끄고 파일을 만들까요?`n접속해 있는 친구들은 나가져요. 월드는 저장된 다음에 만들어요.")) { return $false }
+        Stop-Server -NoAsk
+    }
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    while ((Test-ServerRunning $d) -or ($script:autoBk -and $script:autoBk.dir -eq $d)) {
+        if ($sw.Elapsed.TotalMinutes -ge 10) { Show-Msg '서버가 10분이 지나도 안 꺼졌어요. 메인 화면의 상태를 확인하고 다시 해 주세요.' 'Warning'; return $false }
+        $what = '서버를 끄는 중... (월드를 저장하고 있어요)'; if (-not (Test-ServerRunning $d)) { $what = '꺼진 서버의 월드를 자동으로 백업하는 중...' }
+        if ($lbl) { $lbl.Text = "$what  $([int]$sw.Elapsed.TotalSeconds)초" }
+        Pump 500
+    }
+    return $true
+}
+function New-HostingZip($d, [string]$provider, [string]$addr, [string]$panel, $lbl) {
+    # The zip to upload by hand. Returns its path, or $null (the reason was already shown)
+    if (-not (Stop-ServerAndWait $d $lbl)) { return $null }
+    $name = Split-Path $d -Leaf
+    $hh = Get-Hosting $d; $hh.provider = $provider; $hh.address = $addr; $hh.panel = $panel; Save-Hosting $d $hh
+    $lbl.Text = '이 PC의 월드를 백업하는 중...'; Pump 50
+    [void](New-WorldBackup $d 'before_hosting')
+    Set-SafeDefaults $d; Set-InviteMotd $d $addr
+    $tag = '호스팅용'; $extra = ''
+    if ($provider -eq 'wicked') { $tag = '위키드용'; $pt = Get-AddressPort $addr; if ($pt) { $extra = " -Port $pt" } }
+    $zip = Join-Path $HostingOutDir "$name-$tag.zip"
+    $r = Invoke-HostingJob 'Pack' $d "-Out `"$zip`"$extra" $lbl
+    if (-not $r.ok) { $lbl.Text = '파일을 만들지 못했어요.'; Show-Msg "올릴 파일을 만들지 못했어요.`n$($r.text)" 'Warning'; return $null }
+    return $zip
+}
+function Complete-ManualMove($d, [string]$provider, [string]$a, [string]$panel, $lbl) {
+    # After a zip went up by hand: ask the hosted server whether it is this one, then mark the server as hosted there
+    if (Test-ServerRunning $d) { Show-Msg "이 PC의 서버가 켜져 있어요. 끈 다음에 해 주세요.`n(둘 다 켜져 있으면 친구들이 엉뚱한 쪽으로 들어가요)" 'Warning'; return $false }
+    $name = Split-Path $d -Leaf
+    $form.Cursor = 'WaitCursor'; $lbl.Text = "호스팅 서버에 접속해 보는 중... ($a)"; Pump 50
+    try { $c = Find-HostCode $a $name } finally { $form.Cursor = 'Default' }
+    $mine = Read-JoinCode (Get-JoinCode $d $a)
+    if (-not $c) {
+        $lbl.Text = '호스팅 서버에서 이 서버를 찾지 못했어요.'
+        if (-not (Ask-YesNo ("호스팅 서버($a)에서 이 서버를 찾지 못했어요. 이럴 때가 많아요:`n" +
+                    "- 호스팅 서버가 아직 꺼져 있거나 켜지는 중 (모드팩은 몇 분 걸려요)`n- 압축 파일을 올려서 풀지 않았거나, 다른 폴더에 풀었어요`n- 주소가 달라요 (포트 번호까지 넣었는지 확인)`n`n" +
+                    "확인 없이 그냥 '호스팅에서 돌아가요'로 바꿀까요?`n(친구들 프로그램이 모드 바뀐 것을 알아채려면 호스팅 서버가 제대로 떠 있어야 해요)"))) { return $false }
+    }
+    elseif ($mine -and ($c.k -ne $mine.k -or (ConvertTo-ModsB64 $c.m) -ne (ConvertTo-ModsB64 $mine.m))) {
+        if (-not (Ask-YesNo "호스팅 서버는 찾았는데, 모드가 이 PC와 달라요. 파일을 다시 만들어 올렸는지 확인해 주세요.`n`n그래도 옮기기를 끝낼까요?")) { return $false }
+    }
+    $hh = Get-Hosting $d; $hh.where = 'host'; $hh.provider = $provider; $hh.address = $a; $hh.panel = $panel; $hh.since = (Get-Date -Format 'yyyy-MM-dd HH:mm')
+    if ($provider -ne 'wicked') { $hh.ptId = '' }
+    Save-Hosting $d $hh
+    return $true
+}
+function Test-Hosted($d) { if (-not $d) { return $false }; return (Get-Hosting $d).where -eq 'host' }
+function Get-ServerAddress($d) {
+    # What friends type in right now: the hosting's address while hosted, otherwise this PC's Playit address
+    $h = Get-Hosting $d
+    if ($h.where -eq 'host' -and $h.address) { return [string]$h.address }
+    return Get-PlayitAddress
+}
+function Save-ExKey([string]$key) {
+    $enc = [Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($key), $ExKeyEntropy, 'CurrentUser')
+    New-Item -ItemType Directory -Force $ExDir | Out-Null
+    [IO.File]::WriteAllText($ExKeyFile, [Convert]::ToBase64String($enc), $Utf8)
+}
+function Get-ExKey {
+    if (-not (Test-Path -LiteralPath $ExKeyFile)) { return '' }
+    try { return [Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String(([IO.File]::ReadAllText($ExKeyFile)).Trim()), $ExKeyEntropy, 'CurrentUser')) }
+    catch { return '' }   # saved on another PC or Windows account
+}
+function Invoke-ExApi([string]$method, [string]$path, $body = $null, [int]$timeout = 15) {
+    $k = Get-ExKey; if (-not $k) { throw 'exaroton API 키가 없어요. [서버 위치] 창에서 키를 저장해 주세요.' }
+    $p = @{ Uri = "$ExApi/$path"; Method = $method; TimeoutSec = $timeout; Headers = @{ Authorization = "Bearer $k" }; UserAgent = 'mcsm' }
+    if ($null -ne $body) { $p.ContentType = 'application/json; charset=utf-8'; $p.Body = [Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json -Compress)) }
+    try { $r = Invoke-RestMethod @p }
+    catch {
+        $code = 0; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+        if ($code -eq 401 -or $code -eq 403) { throw 'exaroton이 API 키를 받아 주지 않아요. [서버 위치] 창에서 키를 다시 만들어 저장해 주세요.' }
+        throw "exaroton에 연결하지 못했어요. 인터넷을 확인해 주세요. ($($_.Exception.Message))"
+    }
+    if ($r.PSObject.Properties['success'] -and -not $r.success) { throw "exaroton: $($r.error)" }
+    return $r.data
+}
+function Save-PtKey([string]$key) {
+    $enc = [Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($key), $PtKeyEntropy, 'CurrentUser')
+    New-Item -ItemType Directory -Force $PtDir | Out-Null
+    [IO.File]::WriteAllText($PtKeyFile, [Convert]::ToBase64String($enc), $Utf8)
+}
+function Get-PtKey {
+    if (-not (Test-Path -LiteralPath $PtKeyFile)) { return '' }
+    try { return [Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String(([IO.File]::ReadAllText($PtKeyFile)).Trim()), $PtKeyEntropy, 'CurrentUser')) }
+    catch { return '' }
+}
+function Invoke-PtApi([string]$method, [string]$path, $body = $null, [int]$timeout = 15) {
+    # $path after /api/client ('' = my servers). Returns the parsed answer (Pterodactyl wraps things in attributes/data)
+    $k = Get-PtKey; if (-not $k) { throw '위키드 API 키가 없어요. [서버 위치] 창에서 키를 저장해 주세요.' }
+    $p = @{ Uri = "$PtApi/api/client$path"; Method = $method; TimeoutSec = $timeout; Headers = @{ Authorization = "Bearer $k"; Accept = 'application/json' }; UserAgent = 'mcsm' }
+    if ($null -ne $body) { $p.ContentType = 'application/json; charset=utf-8'; $p.Body = [Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json -Compress)) }
+    try { return Invoke-RestMethod @p }
+    catch {
+        $code = 0; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+        if ($code -eq 401 -or $code -eq 403) { throw '위키드가 API 키를 받아 주지 않아요. 위키드 패널의 계정 → API에서 키를 다시 만들어 [서버 위치] 창에 저장해 주세요.' }
+        if ($code -eq 502 -or $code -eq 409) { throw '위키드 서버가 꺼져 있거나 켜지는 중이라 받지 않았어요.' }
+        throw "위키드에 연결하지 못했어요. 인터넷을 확인해 주세요. ($($_.Exception.Message))"
+    }
+}
+function Get-PtServers {
+    # My Wicked servers with the address friends type (the main allocation: alias or ip, and its port)
+    return @((Invoke-PtApi 'GET' '').data | Where-Object { $_ } | ForEach-Object {
+            $a = $_.attributes
+            $al = @($a.relationships.allocations.data | Where-Object { $_ } | ForEach-Object { $_.attributes })
+            $main = @($al | Where-Object { $_.is_default }) + $al | Select-Object -First 1
+            $addr = ''; if ($main) { $hn = "$($main.ip_alias)"; if (-not $hn) { $hn = "$($main.ip)" }; $addr = "$($hn):$($main.port)" }
+            [pscustomobject]@{ id = "$($a.identifier)"; name = "$($a.name)"; address = $addr; ramMB = [int]$a.limits.memory }
+        })
+}
+function Get-PtState([string]$id) { return "$((Invoke-PtApi 'GET' "/servers/$id/resources").attributes.current_state)" }
+function Get-PtForge([string]$id) {
+    # Which Forge/NeoForge the Wicked server has installed (its libraries folder), '' when unknown
+    foreach ($p in '/libraries/net/minecraftforge/forge', '/libraries/net/neoforged/neoforge') {
+        try { $v = @((Invoke-PtApi 'GET' "/servers/$id/files/list?directory=$([Uri]::EscapeDataString($p))").data | ForEach-Object { "$($_.attributes.name)" }) } catch { continue }
+        if ($v.Count) { return ($v | Sort-Object | Select-Object -Last 1) }
+    }
+    return ''
+}
+function Get-HostingSpec($d) {
+    # What the hosted server must run, in the words hosting pages use
+    $i = Read-Json (Join-Path $d 'server-info.json'); $li = Get-LaunchInfo $d
+    $ln = switch ("$($i.loader)") { 'neoforge' { 'NeoForge' } 'fabric' { 'Fabric' } 'quilt' { 'Quilt' } default { 'Forge' } }
+    $java = '17'; if ($li) { $java = $li.major }
+    $ram = [Math]::Max(6, (Get-ServerRam $d))
+    return [pscustomobject]@{ mc = "$($i.mc)"; loader = $ln; lv = "$($i.loaderVersion)"; java = $java; ram = $ram
+        text = "마인크래프트 $($i.mc)  /  $ln $($i.loaderVersion)  /  Java $java  /  램 $($ram)GB 이상 (친구 3명 넘으면 8GB)" }
+}
+function Invoke-HostingJob([string]$action, $d, [string]$extra, $lbl) {
+    # hosting.ps1 runs hidden; the window stays responsive and $lbl shows how far it got. Returns @{ ok; text }
+    $sf = Join-Path $env:TEMP "mcsm-hosting-$([guid]::NewGuid().ToString('N')).txt"
+    $argLine = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $Prog 'hosting.ps1')`" -Action $action -Dir `"$d`" -StatusFile `"$sf`" $extra"
+    $p = New-Object McProc('powershell.exe', $argLine, $Prog, [Text.Encoding]::Default.CodePage)
+    $line = $null; $err = ''
+    while ($p.Running -or $p.Lines.Count) {
+        while ($p.Lines.TryDequeue([ref]$line)) {
+            if ($line -match '^P (\d+) (\d+) (.*)$') { $t = $Matches[3]; if ([int]$Matches[2] -gt 0) { $t = "[$($Matches[1])/$($Matches[2])] $t" }; if ($lbl) { $lbl.Text = $t } }
+            elseif ($line -match '^ERR (.*)$') { $err = $Matches[1] }
+            else { Write-ErrLog "hosting.ps1: $line" }
+        }
+        Pump 200
+    }
+    $res = ''; if (Test-Path -LiteralPath $sf) { $res = ([IO.File]::ReadAllText($sf)).Trim(); Remove-Item -LiteralPath $sf -Force -ErrorAction SilentlyContinue }
+    if ($res -like 'OK*') { return @{ ok = $true; text = $res } }
+    if ($res -like 'FAIL *') { $err = $res.Substring(5) } elseif (-not $err) { $err = '작업이 중간에 멈췄어요. (기록: _program\logs\manager-errors.txt)' }
+    return @{ ok = $false; text = $err }
+}
+function Get-PendingNames($d) {
+    $pend = Join-Path $d 'whitelist-pending.txt'
+    if (-not (Test-Path -LiteralPath $pend)) { return @() }
+    return @(Get-Content -LiteralPath $pend | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[A-Za-z0-9_]{3,16}$' } | Select-Object -Unique)
+}
+
+# ---- the main window while the selected server is hosted ----
+function Update-WhereUi {
+    $d = Get-SelDir; $h = Get-Hosting $d
+    if ($d -and $h.where -eq 'host') {
+        $prov = Get-ProviderName $h
+        $btnWhere.Text = "서버 위치: 호스팅 ($prov)   (바꾸기)"
+        $btnWhere.BackColor = [Drawing.Color]::FromArgb(222, 234, 250)
+        $lblWhere.Text = "친구 주소: $($h.address)"; $tip.SetToolTip($lblWhere, "친구 주소: $($h.address)")
+        if (-not $script:srv) {
+            $btnStart.Text = '▶ 호스팅 켜기'; $btnStop.Text = '■ 호스팅 끄기'; $btnStop.Enabled = $true
+            Set-State '● 호스팅에서 돌아가요' ([Drawing.Color]::SteelBlue)
+            if (Test-ApiHosted $h) { Start-ExPoll $d -Now } else { $script:exPoll = $null; $lblStage.Text = "켜고 끄기는 $(Get-HostingSite $h)에서 해요. 친구들은 [▶ 게임 켜기]만 누르면 돼요." }
+        }
+        return
+    }
+    $script:exPoll = $null
+    $btnWhere.Text = '서버 위치: 내 PC   (호스팅으로 옮기기)'; $btnWhere.BackColor = [Drawing.SystemColors]::Control; $btnWhere.UseVisualStyleBackColor = $true
+    $lblWhere.Text = ''
+    if (-not $script:srv) {
+        $btnStart.Text = '▶ 친구랑 하기'; $btnStop.Text = '■ 서버 끄기'; $btnStop.Enabled = $false
+        if ($lblState.Text -like '*호스팅*') { Set-State '● 꺼짐' ([Drawing.Color]::Gray); $lblStage.Text = ''; $lblPlayers.Text = '접속 0명' }
+    }
+}
+$script:exPoll = $null; $script:exTask = $null; $script:exHttp = $null
+function Start-ExPoll($d, [switch]$Now, [switch]$Fast) {
+    # The hosted server's state (exaroton or Wicked), asked in the background so a slow connection never freezes the window
+    $h = Get-Hosting $d
+    if ($h.where -ne 'host' -or -not (Test-ApiHosted $h)) { $script:exPoll = $null; return }
+    $kind = 'ex'; $id = [string]$h.exId; if ($h.provider -eq 'wicked') { $kind = 'pt'; $id = [string]$h.ptId }
+    if (-not $script:exPoll -or $script:exPoll.dir -ne $d -or $script:exPoll.kind -ne $kind) { $script:exPoll = @{ dir = $d; id = $id; kind = $kind; next = [datetime]::MinValue; fast = $false } }
+    if ($Now) { $script:exPoll.next = [datetime]::MinValue }
+    if ($Fast) { $script:exPoll.fast = $true }
+}
+function Update-ExPoll {
+    $p = $script:exPoll; if (-not $p) { return }
+    if ($script:exTask) {
+        if (-not $script:exTask.IsCompleted) { return }
+        $t = $script:exTask; $script:exTask = $null
+        if ($t.IsFaulted -or $t.IsCanceled) { $p.next = (Get-Date).AddSeconds(20); return }
+        $r = $t.Result
+        if ($r -is [Net.Http.HttpResponseMessage]) {
+            if (-not $r.IsSuccessStatusCode) { Show-ExState $p $null ([int]$r.StatusCode); $p.next = (Get-Date).AddSeconds(60); return }
+            $script:exTask = $r.Content.ReadAsStringAsync(); return
+        }
+        try { $j = ([string]$r) | ConvertFrom-Json } catch { return }
+        if ($p.kind -eq 'pt') {
+            # Pterodactyl: offline / starting / running / stopping, in exaroton's numbers; no player count
+            $cs = "$($j.attributes.current_state)"
+            $st = switch ($cs) { 'running' { 1 } 'starting' { 2 } 'stopping' { 3 } default { 0 } }
+            if ($j.attributes) { Show-ExState $p ([pscustomobject]@{ status = $st; players = $null }) 200 }
+            return
+        }
+        if ($j.success -and $j.data) { Show-ExState $p $j.data 200 }
+        return
+    }
+    if ((Get-Date) -lt $p.next) { return }
+    if ($p.kind -eq 'pt') { $k = Get-PtKey; $url = "$PtApi/api/client/servers/$($p.id)/resources" } else { $k = Get-ExKey; $url = "$ExApi/servers/$($p.id)" }
+    if (-not $k) { $p.next = (Get-Date).AddSeconds(30); return }
+    if (-not $script:exHttp) { $script:exHttp = New-Object Net.Http.HttpClient; $script:exHttp.Timeout = [TimeSpan]::FromSeconds(10) }
+    $req = New-Object Net.Http.HttpRequestMessage([Net.Http.HttpMethod]::Get, $url)
+    $req.Headers.Authorization = New-Object Net.Http.Headers.AuthenticationHeaderValue('Bearer', $k)
+    if ($p.kind -eq 'pt') { $req.Headers.Accept.Add((New-Object Net.Http.Headers.MediaTypeWithQualityHeaderValue('application/json'))) }
+    $script:exTask = $script:exHttp.SendAsync($req)
+    $wait = 20; if ($p.fast) { $wait = 4 }
+    $p.next = (Get-Date).AddSeconds($wait)
+}
+$ExStarting = @(2, 4, 6, 8, 9, 10)
+function Show-ExState($p, $s, [int]$code) {
+    if ($script:srv -or (Get-SelDir) -ne $p.dir) { return }
+    $who = 'exaroton'; if ($p.kind -eq 'pt') { $who = '위키드' }
+    if (-not $s) {
+        if ($code -in 401, 403) { Set-State '● 호스팅 상태를 못 읽었어요' ([Drawing.Color]::Firebrick); $lblStage.Text = "$who API 키가 바뀌었거나 지워졌어요. [서버 위치] 창에서 키를 다시 저장해 주세요." }
+        return
+    }
+    $st = [int]$s.status; $prev = $p.last; $p.last = $st; $addr = (Get-Hosting $p.dir).address
+    if ($st -eq 1) {
+        Set-State '● 호스팅에서 켜져 있어요' ([Drawing.Color]::ForestGreen); $p.fast = $false
+        if ($p.kind -eq 'pt') { $lblPlayers.Text = '' } else { $n = 0; try { $n = [int]$s.players.count } catch { }; $lblPlayers.Text = ('접속 {0}명' -f $n) }
+        $lblStage.Text = "친구들은 [▶ 게임 켜기]만 누르면 돼요. (주소: $addr)  나는 왼쪽 [▶ 마인크래프트 켜기]."
+        # Friends added while the Wicked server was off go on the whitelist now (its API has no list of its own)
+        if ($p.kind -eq 'pt' -and $prev -ne 1) { Send-PtPendingWhitelist $p.dir }
+    }
+    elseif ($st -eq 0) {
+        Set-State '● 호스팅 서버 꺼짐' ([Drawing.Color]::Gray); $lblPlayers.Text = '접속 0명'; $p.fast = $false
+        $lblStage.Text = '[▶ 호스팅 켜기]로 켜요. 꺼져 있는 동안에는 요금이 나가지 않아요.'
+        if ($p.kind -eq 'pt') { $lblStage.Text = '[▶ 호스팅 켜기]로 켜요.' }
+    }
+    elseif ($st -eq 7) {
+        Set-State '● 호스팅 서버가 오류로 멈췄어요' ([Drawing.Color]::Firebrick); $p.fast = $false
+        $lblStage.Text = 'exaroton 사이트의 Console(콘솔) 마지막 줄을 확인해 주세요. 방금 모드를 바꿨다면 [모드 추가 / 관리]에서 빼고 다시 켜 보세요.'
+    }
+    elseif ($st -in 3, 5) { Set-State '● 호스팅 끄는 중...  (월드를 저장하고 있어요)' ([Drawing.Color]::SlateGray); $p.fast = $true }
+    else {
+        $q = ''; if ($st -eq 8) { $q = ' (exaroton 대기열에서 기다리는 중)' }
+        Set-State "● 호스팅 켜는 중...$q" ([Drawing.Color]::DarkOrange); $p.fast = $true
+        $lblStage.Text = '모드가 많아서 다 켜지려면 몇 분 걸려요. 켜지면 여기 초록색으로 바뀌어요.'
+    }
+}
+function Get-ExServer($d) { $h = Get-Hosting $d; return Invoke-ExApi 'GET' "servers/$($h.exId)" }
+function Start-HostedServer($d, [switch]$Local) {
+    $h = Get-Hosting $d
+    if ($Local) {
+        Show-Msg ("이 서버의 월드는 지금 호스팅에 있어요.`n여기서 켜면 월드가 둘로 갈라져서, 한쪽에서 한 게 사라져요.`n`n" +
+            "이 PC에서 하려면 위의 [서버 위치] → '내 PC로 되돌리기'를 먼저 해 주세요. (호스팅의 최신 월드를 가져와요)")
+        return
+    }
+    if (-not (Test-ApiHosted $h)) {
+        $go = ''; if ($h.panel) { $go = "`n`n호스팅 관리 페이지를 열어 드릴게요." }
+        Show-Msg "이 서버는 $(Get-HostingSite $h)에서 켜고 꺼요.$go"
+        if ($h.panel) { Open-Url $h.panel }
+        return
+    }
+    $form.Cursor = 'WaitCursor'
+    if ($h.provider -eq 'wicked') {
+        try {
+            $st = Get-PtState $h.ptId
+            if ($st -eq 'running') { Show-Msg '호스팅 서버는 이미 켜져 있어요.'; return }
+            if ($st -ne 'offline') { Show-Msg '호스팅 서버가 지금 켜지거나 꺼지는 중이에요. 조금 뒤에 다시 해 주세요.'; return }
+            [void](Invoke-PtApi 'POST' "/servers/$($h.ptId)/power" @{ signal = 'start' })
+            Set-State '● 호스팅 켜는 중...' ([Drawing.Color]::DarkOrange)
+            $lblStage.Text = '모드가 많아서 다 켜지려면 몇 분 걸려요. 켜지면 여기 초록색으로 바뀌어요.'
+            Start-ExPoll $d -Fast
+            $script:exPoll.next = (Get-Date).AddSeconds(3)
+        }
+        catch { Show-Msg "호스팅 서버를 켜지 못했어요.`n$($_.Exception.Message)`n`n위키드 결제가 밀렸으면 서비스가 멈춰 있을 수 있어요. 위키드 스토어의 [내 서비스]를 확인해 주세요." 'Warning' }
+        finally { $form.Cursor = 'Default' }
+        return
+    }
+    try {
+        $s = Get-ExServer $d
+        if ([int]$s.status -eq 1) { Show-Msg '호스팅 서버는 이미 켜져 있어요.'; return }
+        if ([int]$s.status -notin 0, 7) { Show-Msg '호스팅 서버가 지금 켜지거나 꺼지는 중이에요. 조금 뒤에 다시 해 주세요.'; return }
+        [void](Invoke-ExApi 'GET' "servers/$($h.exId)/start/")
+        Set-State '● 호스팅 켜는 중...' ([Drawing.Color]::DarkOrange)
+        $lblStage.Text = '모드가 많아서 다 켜지려면 몇 분 걸려요. 켜지면 여기 초록색으로 바뀌어요.'
+        Start-ExPoll $d -Fast
+        $script:exPoll.next = (Get-Date).AddSeconds(3)
+    }
+    catch { Show-Msg "호스팅 서버를 켜지 못했어요.`n$($_.Exception.Message)`n`n크레딧이 모자라면 exaroton 사이트에서 충전해 주세요." 'Warning' }
+    finally { $form.Cursor = 'Default' }
+}
+function Stop-HostedServer($d) {
+    $h = Get-Hosting $d
+    if (-not (Test-ApiHosted $h)) { Show-Msg "이 서버는 $(Get-HostingSite $h)에서 켜고 꺼요."; if ($h.panel) { Open-Url $h.panel }; return }
+    if (-not (Ask-YesNo "호스팅 서버를 끌까요?`n접속해 있는 친구들은 나가져요. 월드는 저장돼요.")) { return }
+    try {
+        if ($h.provider -eq 'wicked') { [void](Invoke-PtApi 'POST' "/servers/$($h.ptId)/power" @{ signal = 'stop' }) } else { [void](Invoke-ExApi 'GET' "servers/$($h.exId)/stop/") }
+        Set-State '● 호스팅 끄는 중...  (월드를 저장하고 있어요)' ([Drawing.Color]::SlateGray); Start-ExPoll $d -Fast
+    }
+    catch { Show-Msg "호스팅 서버를 끄지 못했어요.`n$($_.Exception.Message)" 'Warning' }
+}
+function Send-HostedCommand($d, [string]$c) {
+    $h = Get-Hosting $d
+    if (-not (Test-ApiHosted $h)) {
+        try { [Windows.Forms.Clipboard]::SetText($c) } catch { }
+        Show-Msg "이 서버는 호스팅에서 돌아가요. 명령을 복사해 뒀어요.`n$(Get-HostingSite $h)의 콘솔(Console)에 붙여 넣고 Enter 를 눌러 주세요.`n`n$c"
+        return $true
+    }
+    if ($c -eq 'stop') { Stop-HostedServer $d; return $true }
+    try {
+        if ($h.provider -eq 'wicked') { [void](Invoke-PtApi 'POST' "/servers/$($h.ptId)/command" @{ command = $c }) } else { [void](Invoke-ExApi 'POST' "servers/$($h.exId)/command/" @{ command = $c }) }
+        $txtConsole.AppendText("> $c   (호스팅 서버에 보냈어요. 결과는 $(Get-HostingSite $h)의 콘솔에서 보여요)`r`n"); return $true
+    }
+    catch { Show-Msg "명령을 보내지 못했어요. 호스팅 서버가 켜져 있는지 확인해 주세요.`n$($_.Exception.Message)" 'Warning'; return $false }
+}
+function Send-PtPendingWhitelist($d) {
+    # Names saved while the Wicked server was off; sent once it runs, then forgotten
+    $h = Get-Hosting $d; if (-not $h.ptId) { return }
+    $names = @(Get-PendingNames $d); if (-not $names.Count) { return }
+    $left = @()
+    foreach ($n in $names) { try { [void](Invoke-PtApi 'POST' "/servers/$($h.ptId)/command" @{ command = "whitelist add $n" }) } catch { $left += $n } }
+    $pf = Join-Path $d 'whitelist-pending.txt'
+    if ($left.Count) { [IO.File]::WriteAllLines($pf, [string[]]$left) } else { Remove-Item -LiteralPath $pf -Force -ErrorAction SilentlyContinue }
+    $done = @($names | Where-Object { $_ -notin $left })
+    if ($done.Count) { $txtConsole.AppendText("> 호스팅 서버가 켜져서 화이트리스트에 넣었어요: $($done -join ', ')`r`n") }
+}
+function Add-HostedWhitelist($d, [string]$nick) {
+    $h = Get-Hosting $d
+    if ($h.provider -eq 'exaroton' -and $h.exId) {
+        try { [void](Invoke-ExApi 'PUT' "servers/$($h.exId)/playerlists/whitelist/" @{ entries = @($nick) }); Show-Msg "'$nick' 님을 호스팅 서버의 화이트리스트에 넣었어요. 바로 들어올 수 있어요." }
+        catch { Show-Msg "화이트리스트에 넣지 못했어요.`n$($_.Exception.Message)" 'Warning' }
+        return
+    }
+    if ($h.provider -eq 'wicked' -and $h.ptId) {
+        # Its API takes console commands only, so a server that is off gets the name when it next runs
+        $st = ''; try { $st = Get-PtState $h.ptId } catch { }
+        if ($st -eq 'running') {
+            try { [void](Invoke-PtApi 'POST' "/servers/$($h.ptId)/command" @{ command = "whitelist add $nick" }); Show-Msg "'$nick' 님을 호스팅 서버의 화이트리스트에 넣었어요. 바로 들어올 수 있어요."; return }
+            catch { }
+        }
+        Add-Content -LiteralPath (Join-Path $d 'whitelist-pending.txt') -Value $nick
+        Show-Msg "'$nick' 님을 기억해 뒀어요. 호스팅 서버가 켜지면 이 프로그램이 화이트리스트에 넣어요.`n(이 프로그램이 켜져 있을 때 [▶ 호스팅 켜기]로 켜면 바로 들어가요)"
+        return
+    }
+    # Kept here too, so the name is still on the list after the server comes back to this PC
+    Add-Content -LiteralPath (Join-Path $d 'whitelist-pending.txt') -Value $nick
+    try { [Windows.Forms.Clipboard]::SetText("whitelist add $nick") } catch { }
+    Show-Msg "호스팅 사이트의 콘솔(Console)에 붙여 넣고 Enter 를 눌러 주세요. 명령을 복사해 뒀어요:`n`nwhitelist add $nick`n`n(서버가 켜져 있을 때 해야 돼요)"
+}
+function Set-HostedRam($d, [int]$gb) {
+    $h = Get-Hosting $d
+    Set-ServerRam $d $gb   # this PC's copy too, for the day it comes back
+    if (-not ($h.provider -eq 'exaroton' -and $h.exId)) { Show-Msg "호스팅 서버의 램은 $(Get-HostingSite $h)에서(요금제) 바꿔 주세요.`n(이 PC로 되돌렸을 때 쓸 램은 $($gb)GB로 바꿔 뒀어요)"; return }
+    try { $r = Invoke-ExApi 'POST' "servers/$($h.exId)/options/ram/" @{ ram = $gb }; Show-Msg "호스팅 서버 램을 $($r.ram)GB로 바꿨어요. 다음에 켤 때부터 적용돼요.`n(램이 클수록 시간당 요금이 늘어요: 1GB에 1시간 1크레딧)" }
+    catch { Show-Msg "램을 바꾸지 못했어요.`n$($_.Exception.Message)" 'Warning' }
+}
+
+# ---- mods / settings / resource packs changed while hosted ----
+function Get-HostedSig($d) {
+    # What the hosted server and friends' copies depend on; compared before and after a dialog that may change it
+    if (-not (Test-Hosted $d)) { return '' }
+    $jars = @(Get-ChildItem -LiteralPath (Join-Path $d 'mods') -Filter '*.jar' -File -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Name):$($_.Length)" } | Sort-Object) -join ','
+    $props = ''; $pf = Join-Path $d 'server.properties'; if (Test-Path -LiteralPath $pf) { $props = (@([IO.File]::ReadAllLines($pf)) | Where-Object { $_ -notmatch '^\s*motd\s*=' }) -join "`n" }
+    $c = Read-JoinCode (Get-JoinCode $d); $cj = ''; if ($c) { $cj = ConvertTo-Json -InputObject $c -Compress -Depth 5 }
+    return "$jars|$props|$cj"
+}
+function Export-HostedChanges($d) {
+    # For a hosting without an API: the whole mods folder and server.properties, ready to put over the hosting's
+    $out = Join-Path $HostingOutDir "$(Split-Path $d -Leaf)_바뀐것"
+    if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
+    New-Item -ItemType Directory -Force $out | Out-Null
+    Copy-Item -LiteralPath (Join-Path $d 'mods') -Destination (Join-Path $out 'mods') -Recurse -Force
+    $pf = Join-Path $d 'server.properties'
+    if (Test-Path -LiteralPath $pf) { Copy-Item -LiteralPath $pf -Destination $out -Force; Set-Props $out @{ 'server-ip' = '' } }
+    return $out
+}
+function Push-HostedChanges($d, [switch]$Ask) {
+    $h = Get-Hosting $d
+    Set-InviteMotd $d
+    if (Test-ApiHosted $h) {
+        if ($Ask -and -not (Ask-YesNo "바뀐 모드·설정을 호스팅 서버에도 올릴까요? (추천)`n`n올려야 호스팅 서버에 적용되고, 친구들 프로그램도 [▶ 게임 켜기]를 누를 때 알아서 맞춰요.")) {
+            $lblStage.Text = '호스팅에는 아직 안 올렸어요. [서버 위치] 창의 [바뀐 모드·설정 올리기]로 언제든 올릴 수 있어요.'; return
+        }
+        $pt = $h.provider -eq 'wicked'
+        $job = 'ExSync'; $id = $h.exId; if ($pt) { $job = 'PtSync'; $id = $h.ptId }
+        $form.Cursor = 'WaitCursor'; $btnWhere.Enabled = $false
+        try { $r = Invoke-HostingJob $job $d "-ServerId $id" $lblStage } finally { $form.Cursor = 'Default'; $btnWhere.Enabled = $true }
+        if (-not $r.ok) { $lblStage.Text = '호스팅에 올리지 못했어요.'; Show-Msg "호스팅에 올리지 못했어요.`n$($r.text)`n`n[서버 위치] 창의 [바뀐 모드·설정 올리기]로 다시 해 주세요." 'Warning'; return }
+        $lblStage.Text = '바뀐 모드·설정을 호스팅에 올렸어요.'
+        $on = $false
+        try { if ($pt) { $on = (Get-PtState $id) -eq 'running' } else { $on = [int](Get-ExServer $d).status -eq 1 } } catch { }
+        if ($on -and (Ask-YesNo "호스팅 서버가 켜져 있어요. 다시 켜야 바뀐 것이 적용돼요.`n지금 다시 켤까요? (접속한 친구들은 잠깐 나갔다가, 켜진 다음 [▶ 게임 켜기]로 다시 들어오면 돼요)")) {
+            try {
+                if ($pt) { [void](Invoke-PtApi 'POST' "/servers/$id/power" @{ signal = 'restart' }) } else { [void](Invoke-ExApi 'GET' "servers/$id/restart/") }
+                Start-ExPoll $d -Fast
+            }
+            catch { Show-Msg "다시 켜지 못했어요.`n$($_.Exception.Message)" 'Warning' }
+        }
+        return
+    }
+    $out = Export-HostedChanges $d
+    Start-Process explorer.exe "`"$out`""
+    Show-Msg ("호스팅에 올릴 파일을 만들었어요 (방금 열린 폴더).`n`n호스팅 사이트의 파일 관리자(File Manager)에서:`n" +
+        "1. 서버를 끄고`n2. mods 폴더를 통째로 지운 다음, 이 폴더의 mods 폴더를 올리고`n3. server.properties 를 덮어쓰고`n4. 서버를 다시 켜요.`n`n" +
+        "그래야 호스팅 서버에 적용되고, 친구들 프로그램도 [▶ 게임 켜기]를 누를 때 알아서 맞춰요.")
+}
+function Sync-HostedAfter($d, [string]$s0) {
+    if (-not $d -or -not (Test-Hosted $d)) { return }
+    if ((Get-HostedSig $d) -eq $s0) { return }
+    Push-HostedChanges $d -Ask
+}
+
+# ---- moving ----
+function Get-ZipWorldRoot($zipPath) {
+    # The folder inside a downloaded zip that holds level.dat (hostings zip "world/..." or the whole server)
+    $z = [IO.Compression.ZipFile]::OpenRead($zipPath)
+    try {
+        # Zips made on Windows may separate folders with '\'
+        $hit = @($z.Entries | ForEach-Object { $_.FullName.Replace('\', '/') } | Where-Object { $_ -match '(^|/)level\.dat$' } | Sort-Object { $_.Length } | Select-Object -First 1)
+        if (-not $hit.Count) { return $null }
+        return $hit[0].Substring(0, $hit[0].Length - 'level.dat'.Length)
+    }
+    finally { $z.Dispose() }
+}
+function Expand-ZipPart($zipPath, [string]$prefix, [string]$dest) {
+    # Only entries under $prefix, and none that would land outside $dest
+    $z = [IO.Compression.ZipFile]::OpenRead($zipPath)
+    try {
+        $root = [IO.Path]::GetFullPath($dest).TrimEnd('\') + '\'
+        foreach ($e in $z.Entries) {
+            $n = $e.FullName.Replace('\', '/'); if (-not $n.StartsWith($prefix) -or $n.EndsWith('/')) { continue }
+            $rel = $n.Substring($prefix.Length); if (-not $rel -or $rel -match '(^|/)\.\.(/|$)' -or $rel -like '*session.lock') { continue }
+            $target = [IO.Path]::GetFullPath((Join-Path $dest $rel.Replace('/', '\')))
+            if (-not $target.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            New-Item -ItemType Directory -Force (Split-Path $target -Parent) | Out-Null
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $target, $true)
+        }
+    }
+    finally { $z.Dispose() }
+}
+function Set-WorldFrom($d, [string]$newWorld, [string]$listsDir) {
+    # Puts the world that came back from the hosting in place of this PC's (already backed up) one
+    $lv = Get-LevelDir $d
+    $old = "$lv.교체중"
+    if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Recurse -Force }
+    if (Test-Path -LiteralPath $lv) { Move-Item -LiteralPath $lv -Destination $old }
+    try { Move-Item -LiteralPath $newWorld -Destination $lv }
+    catch { if (Test-Path -LiteralPath $old) { Move-Item -LiteralPath $old -Destination $lv }; throw }
+    Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue
+    if ($listsDir) {
+        foreach ($n in 'whitelist.json', 'ops.json', 'banned-players.json', 'banned-ips.json', 'usercache.json') {
+            $f = Join-Path $listsDir $n; if (Test-Path -LiteralPath $f) { Copy-Item -LiteralPath $f -Destination (Join-Path $d $n) -Force }
+        }
+    }
+}
+function Move-ToExaroton($d, $srvObj, $lbl) {
+    if (-not (Stop-ServerAndWait $d $lbl)) { return $false }
+    $id = [string]$srvObj.id; $addr = ConvertTo-PlayitAddress ([string]$srvObj.address)
+    if (-not $addr) { Show-Msg 'exaroton 서버 주소를 읽지 못했어요. [서버 불러오기]를 다시 눌러 주세요.'; return $false }
+    if ([int]$srvObj.status -notin 0, 7) { Show-Msg "exaroton 서버가 켜져 있어요. exaroton 사이트에서 [Stop]으로 끈 다음 다시 해 주세요.`n(켜진 채로 올리면 파일이 섞여요)"; return $false }
+    $lbl.Text = '이 PC의 월드를 백업하는 중... (옮기다 잘못돼도 되돌릴 수 있게)'
+    [void](New-WorldBackup $d 'before_hosting')
+    Set-SafeDefaults $d
+    Set-InviteMotd $d $addr
+    try { [void](Invoke-ExApi 'POST' "servers/$id/options/ram/" @{ ram = [int](Get-HostingSpec $d).ram }) } catch { }
+    $r = Invoke-HostingJob 'ExUpload' $d "-ServerId $id" $lbl
+    if (-not $r.ok) {
+        $lbl.Text = '옮기지 못했어요.'
+        Show-Msg "exaroton에 올리지 못했어요.`n$($r.text)`n`n이 PC의 서버는 그대로예요. 지금처럼 [▶ 친구랑 하기]로 쓸 수 있고, 나중에 다시 옮기면 돼요." 'Warning'
+        Set-InviteMotd $d (Get-PlayitAddress)
+        return $false
+    }
+    $pend = @(Get-PendingNames $d)
+    if ($pend.Count) { try { [void](Invoke-ExApi 'PUT' "servers/$id/playerlists/whitelist/" @{ entries = $pend }); Remove-Item -LiteralPath (Join-Path $d 'whitelist-pending.txt') -Force } catch { } }
+    $h = Get-Hosting $d
+    $h.where = 'host'; $h.provider = 'exaroton'; $h.address = $addr; $h.exId = $id; $h.exName = [string]$srvObj.name; $h.since = (Get-Date -Format 'yyyy-MM-dd HH:mm')
+    Save-Hosting $d $h
+    return $true
+}
+function Move-FromExaroton($d, $lbl) {
+    $h = Get-Hosting $d
+    try { $s = Get-ExServer $d } catch { Show-Msg $_.Exception.Message 'Warning'; return $false }
+    if ([int]$s.status -notin 0, 7) {
+        if (-not (Ask-YesNo "호스팅 서버가 켜져 있어요. 끄고 가져올까요?`n접속해 있는 친구들은 나가져요. 월드는 저장된 다음에 가져와요.")) { return $false }
+        try { [void](Invoke-ExApi 'GET' "servers/$($h.exId)/stop/") } catch { Show-Msg "호스팅 서버를 끄지 못했어요.`n$($_.Exception.Message)" 'Warning'; return $false }
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        while ($sw.Elapsed.TotalMinutes -lt 5) {
+            $lbl.Text = "호스팅 서버를 끄는 중... ($([int]$sw.Elapsed.TotalSeconds)초)"; Pump 4000
+            try { if ([int](Get-ExServer $d).status -in 0, 7) { break } } catch { }
+        }
+        try { if ([int](Get-ExServer $d).status -notin 0, 7) { Show-Msg '호스팅 서버가 5분이 지나도 안 꺼졌어요. exaroton 사이트에서 확인하고 다시 해 주세요.' 'Warning'; return $false } } catch { }
+    }
+    $lbl.Text = '이 PC에 있던 옛 월드를 백업하는 중...'
+    [void](New-WorldBackup $d 'before_return')
+    $r = Invoke-HostingJob 'ExDownload' $d "-ServerId $($h.exId)" $lbl
+    $tmp = Join-Path $d '_from_hosting'
+    if (-not $r.ok) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue; Show-Msg "호스팅의 월드를 받지 못했어요.`n$($r.text)`n`n아무것도 바뀌지 않았어요. 서버는 계속 호스팅에 있어요." 'Warning'; return $false }
+    $lvName = Split-Path (Get-LevelDir $d) -Leaf
+    Set-WorldFrom $d (Join-Path $tmp $lvName) $tmp
+    Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    $h.where = 'pc'; $h.since = (Get-Date -Format 'yyyy-MM-dd HH:mm'); Save-Hosting $d $h
+    Set-InviteMotd $d
+    return $true
+}
+function Move-ToWicked($d, $srvObj, $lbl) {
+    # Through the Wicked API: stop this PC's server, back up, upload everything, remember where it went
+    if (-not (Stop-ServerAndWait $d $lbl)) { return $false }
+    $id = [string]$srvObj.id; $addr = ConvertTo-PlayitAddress ([string]$srvObj.address)
+    if (-not $addr) { Show-Msg '위키드 서버 주소를 읽지 못했어요. [서버 불러오기]를 다시 눌러 주세요.'; return $false }
+    $st = ''; try { $st = Get-PtState $id } catch { Show-Msg $_.Exception.Message 'Warning'; return $false }
+    if ($st -ne 'offline') { Show-Msg "위키드 서버가 켜져 있어요. 위키드 패널의 콘솔에서 [중지]로 끈 다음 다시 해 주세요.`n(켜진 채로 올리면 파일이 섞여요)"; return $false }
+    $lbl.Text = '이 PC의 월드를 백업하는 중... (옮기다 잘못돼도 되돌릴 수 있게)'; Pump 50
+    [void](New-WorldBackup $d 'before_hosting')
+    Set-SafeDefaults $d
+    Set-InviteMotd $d $addr
+    $port = Get-AddressPort $addr; $extra = "-ServerId $id"; if ($port) { $extra += " -Port $port" }
+    $r = Invoke-HostingJob 'PtUpload' $d $extra $lbl
+    if (-not $r.ok) {
+        $lbl.Text = '옮기지 못했어요.'
+        Show-Msg "위키드에 올리지 못했어요.`n$($r.text)`n`n이 PC의 서버는 그대로예요. 지금처럼 [▶ 친구랑 하기]로 쓸 수 있고, 나중에 다시 옮기면 돼요." 'Warning'
+        Set-InviteMotd $d (Get-PlayitAddress)
+        return $false
+    }
+    $h = Get-Hosting $d
+    $h.where = 'host'; $h.provider = 'wicked'; $h.address = $addr; $h.ptId = $id; $h.exName = [string]$srvObj.name; $h.panel = $WickedPanel; $h.since = (Get-Date -Format 'yyyy-MM-dd HH:mm')
+    Save-Hosting $d $h
+    return $true
+}
+function Move-FromWicked($d, $lbl) {
+    $h = Get-Hosting $d
+    $st = ''; try { $st = Get-PtState $h.ptId } catch { Show-Msg $_.Exception.Message 'Warning'; return $false }
+    if ($st -ne 'offline') {
+        if (-not (Ask-YesNo "호스팅 서버가 켜져 있어요. 끄고 가져올까요?`n접속해 있는 친구들은 나가져요. 월드는 저장된 다음에 가져와요.")) { return $false }
+        try { [void](Invoke-PtApi 'POST' "/servers/$($h.ptId)/power" @{ signal = 'stop' }) } catch { Show-Msg "호스팅 서버를 끄지 못했어요.`n$($_.Exception.Message)" 'Warning'; return $false }
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        while ($sw.Elapsed.TotalMinutes -lt 5) {
+            $lbl.Text = "호스팅 서버를 끄는 중... ($([int]$sw.Elapsed.TotalSeconds)초)"; Pump 4000
+            try { if ((Get-PtState $h.ptId) -eq 'offline') { break } } catch { }
+        }
+        try { if ((Get-PtState $h.ptId) -ne 'offline') { Show-Msg '호스팅 서버가 5분이 지나도 안 꺼졌어요. 위키드 패널에서 확인하고 다시 해 주세요.' 'Warning'; return $false } } catch { }
+    }
+    $lbl.Text = '이 PC에 있던 옛 월드를 백업하는 중...'
+    [void](New-WorldBackup $d 'before_return')
+    $r = Invoke-HostingJob 'PtDownload' $d "-ServerId $($h.ptId)" $lbl
+    $tmp = Join-Path $d '_from_hosting'
+    if (-not $r.ok) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue; Show-Msg "호스팅의 월드를 받지 못했어요.`n$($r.text)`n`n아무것도 바뀌지 않았어요. 서버는 계속 호스팅에 있어요." 'Warning'; return $false }
+    $lvName = Split-Path (Get-LevelDir $d) -Leaf
+    Set-WorldFrom $d (Join-Path $tmp $lvName) $tmp
+    Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    $h.where = 'pc'; $h.since = (Get-Date -Format 'yyyy-MM-dd HH:mm'); Save-Hosting $d $h
+    Set-InviteMotd $d
+    return $true
+}
+function Move-FromZip($d, [string]$zip, $lbl) {
+    $prefix = Get-ZipWorldRoot $zip
+    if ($null -eq $prefix) { Show-Msg "이 압축 파일에는 월드가 없어요. (level.dat 파일을 못 찾았어요)`n호스팅의 파일 관리자에서 world 폴더를 압축해서 받았는지 확인해 주세요." 'Warning'; return $false }
+    $lbl.Text = '이 PC에 있던 옛 월드를 백업하는 중...'
+    [void](New-WorldBackup $d 'before_return')
+    $tmp = Join-Path $d '_from_hosting'
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
+    $lbl.Text = '받은 월드를 푸는 중...'; Pump 50
+    try {
+        Expand-ZipPart $zip $prefix (Join-Path $tmp 'world')
+        # A whole-server zip also has the player lists next to the world folder
+        $up = ''; if ($prefix -match '^(.*/)?[^/]+/$') { $up = "$($Matches[1])" }
+        Expand-ZipPart $zip $up (Join-Path $tmp 'lists-all')
+        $lists = Join-Path $tmp 'lists'; New-Item -ItemType Directory -Force $lists | Out-Null
+        foreach ($n in 'whitelist.json', 'ops.json', 'banned-players.json', 'banned-ips.json', 'usercache.json') { $f = Join-Path $tmp "lists-all\$n"; if (Test-Path -LiteralPath $f) { Copy-Item -LiteralPath $f -Destination $lists } }
+        Set-WorldFrom $d (Join-Path $tmp 'world') $lists
+    }
+    catch { Show-Msg "월드를 가져오지 못했어요.`n$($_.Exception.Message)" 'Warning'; return $false }
+    finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+    $h = Get-Hosting $d; $h.where = 'pc'; $h.since = (Get-Date -Format 'yyyy-MM-dd HH:mm'); Save-Hosting $d $h
+    Set-InviteMotd $d
+    return $true
+}
+
+function Show-HostingSetup {
+    $d = Get-SelDir; if (-not $d) { Show-Msg '왼쪽 목록에서 서버를 고르세요.'; return }
+    if ($script:installProc) { Show-Msg '설치나 업데이트가 끝난 다음에 해 주세요.'; return }
+    $name = Split-Path $d -Leaf; $h = Get-Hosting $d; $spec = Get-HostingSpec $d
+    # A running server is fine here: every button that moves it stops it first (or says how)
+    if ($script:srv -and $h.where -eq 'host') { Show-Msg '서버가 켜져 있는 동안에는 위치를 바꿀 수 없어요. [■ 서버 끄기]로 끈 다음 해 주세요.'; return }
+    $f = New-Object Windows.Forms.Form
+    $f.Text = "서버 위치 바꾸기 - $name"; $f.Size = New-Object Drawing.Size(780, 720); $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.Font = $font
+    $lWork = New-Ctl Label 15 560 735 44 ''; $lWork.ForeColor = [Drawing.Color]::DarkGreen
+    $lFriend = New-Ctl Label 15 608 735 66 ''; $lFriend.ForeColor = [Drawing.Color]::DimGray
+    $script:hostingMoved = $false
+    if ($h.where -eq 'pc') {
+        $t = New-Ctl Label 15 12 735 44 "지금 '$name' 서버는 내 PC에서 돌아가요. 호스팅으로 옮기면 이 PC를 꺼도 친구들이 들어올 수 있어요.`n옮긴 다음에도 언제든 다시 내 PC로 되돌릴 수 있어요. (그때까지 한 월드를 그대로 가져와요)"
+        $rEx = New-Ctl RadioButton 15 62 735 26 'exaroton  (추천: 올리기, 켜고 끄기, 친구 추가를 이 프로그램이 알아서 해요)'
+        $rWk = New-Ctl RadioButton 15 90 735 26 '위키드 (teamwicked.me)  (한국 서버, 월정액. 올리기, 켜고 끄기, 친구 추가를 이 프로그램이 해요)'
+        $rOt = New-Ctl RadioButton 15 118 735 26 '다른 호스팅  (올릴 파일을 만들어 드려요. 올리는 건 호스팅 사이트에서 직접 해요)'
+        $pEx = New-Object Windows.Forms.Panel; $pEx.Location = New-Object Drawing.Point(0, 150); $pEx.Size = New-Object Drawing.Size(760, 404)
+        $pWk = New-Object Windows.Forms.Panel; $pWk.Location = New-Object Drawing.Point(0, 150); $pWk.Size = New-Object Drawing.Size(760, 404)
+        $pOt = New-Object Windows.Forms.Panel; $pOt.Location = New-Object Drawing.Point(0, 150); $pOt.Size = New-Object Drawing.Size(760, 404)
+        # exaroton: everything through its API
+        $e1 = New-Ctl Label 15 0 735 66 ("① [exaroton 열기] → 가입하고 크레딧을 충전한 다음 'Create server'로 서버를 만들어요.`n" +
+            "    서버 화면의 Software(소프트웨어)에서 꼭 이렇게 골라 주세요:  $($spec.loader) → $($spec.mc) → $($spec.loader) $($spec.lv)`n" +
+            "    (요금: 켜 둔 시간만 나가요. 램 $($spec.ram)GB로 1시간 = $($spec.ram)크레딧 = 약 $([int]($spec.ram * 15))원)")
+        $eb1 = New-Ctl Button 15 68 240 32 'exaroton 열기'
+        $e2 = New-Ctl Label 15 110 735 44 "② [API 키 페이지 열기] → 'Create API token' → 나온 키를 복사해서 아래 칸에 붙여 넣고 [저장].`n    (키는 비밀번호 같은 거예요. 아무에게도 보여 주지 마세요)"
+        $eb2 = New-Ctl Button 15 156 240 32 'API 키 페이지 열기'
+        $etk = New-Ctl TextBox 265 158 360 28; $etk.UseSystemPasswordChar = $true; if (Get-ExKey) { $etk.Text = '(저장돼 있어요)' }
+        $ebs = New-Ctl Button 635 156 115 32 '저장'
+        $e3 = New-Ctl Label 15 198 735 24 '③ [서버 불러오기] → ①에서 만든 서버를 골라요.'
+        $eb3 = New-Ctl Button 15 224 240 32 '서버 불러오기'
+        $ecb = New-Ctl ComboBox 265 226 485 28; $ecb.DropDownStyle = 'DropDownList'
+        $e4 = New-Ctl Label 15 266 735 44 "④ [▶ exaroton으로 옮기기] → 이 PC의 월드, 모드, 설정, 화이트리스트를 그대로 올려요.`n    올리기 전에 이 PC의 월드를 자동으로 백업해요. (모드팩이 커서 10~30분쯤 걸려요)"
+        $ebGo = New-Ctl Button 15 314 330 44 '▶ exaroton으로 옮기기'; $ebGo.Font = $bold; $ebGo.BackColor = [Drawing.Color]::FromArgb(214, 240, 214)
+        $pEx.Controls.AddRange(@($e1, $eb1, $e2, $eb2, $etk, $ebs, $e3, $eb3, $ecb, $e4, $ebGo))
+        # Wicked: Pterodactyl API, or a zip by hand when there is no key
+        $w1 = New-Ctl Label 15 0 735 66 ("① [위키드 패널 열기] → 서버 → 부가기능 → 버전 → $($spec.loader) → $($spec.mc) → 빌드 $($spec.lv) 이상으로 설치해요.`n" +
+            "    처음 옮기는 새 서버라면 '서버 파일 삭제'를 켜도 돼요. 설치한 다음 서버는 아직 켜지 마세요.`n" +
+            "    (위키드가 한 번 켜지면 자기 월드를 만들어요. 그래도 옮길 때 지우고 이 PC의 월드를 올려요)")
+        $wb1 = New-Ctl Button 15 68 240 32 '위키드 패널 열기'
+        $w2 = New-Ctl Label 15 110 735 24 "② [API 키 페이지 열기] → 설명에 아무 이름 → [생성] → 나온 키를 아래 칸에 붙여 넣고 [저장]."
+        $wb2 = New-Ctl Button 15 136 240 32 'API 키 페이지 열기'
+        $wtk = New-Ctl TextBox 265 138 360 28; $wtk.UseSystemPasswordChar = $true; if (Get-PtKey) { $wtk.Text = '(저장돼 있어요)' }
+        $wbs = New-Ctl Button 635 136 115 32 '저장'
+        $w3 = New-Ctl Label 15 178 735 24 '③ [서버 불러오기] → 옮길 위키드 서버를 골라요.'
+        $wb3 = New-Ctl Button 15 204 240 32 '서버 불러오기'
+        $wcb = New-Ctl ComboBox 265 206 485 28; $wcb.DropDownStyle = 'DropDownList'
+        $w4 = New-Ctl Label 15 246 735 44 "④ [▶ 위키드로 옮기기] → 이 PC 서버가 켜져 있으면 끄고, 월드를 백업한 다음 월드·모드·설정·화이트리스트를`n    그대로 올려요. (모드팩이 커서 10~30분쯤 걸려요)"
+        $wbGo = New-Ctl Button 15 292 330 44 '▶ 위키드로 옮기기'; $wbGo.Font = $bold; $wbGo.BackColor = [Drawing.Color]::FromArgb(214, 240, 214)
+        $w5 = New-Ctl Label 15 346 735 24 '키 없이 직접 올리려면: 파일을 만들어 위키드 패널의 [대용량 업로드]로 올리고 [압축 해제]한 다음 →'
+        $w5.ForeColor = [Drawing.Color]::DimGray
+        $wbZip = New-Ctl Button 15 370 330 32 '■ 서버 끄고 위키드용 파일 만들기'
+        $wbDone = New-Ctl Button 355 370 260 32 '확인하고 옮기기 끝내기'
+        $pWk.Controls.AddRange(@($w1, $wb1, $w2, $wb2, $wtk, $wbs, $w3, $wb3, $wcb, $w4, $wbGo, $w5, $wbZip, $wbDone))
+        # any other hosting: a zip to upload by hand, then a check that the right server answers there
+        $o1 = New-Ctl Label 15 0 735 66 "① 호스팅에서 서버를 만들 때 이렇게 골라 주세요:`n    $($spec.text)`n    만든 다음 한 번 켰다가 꺼 주세요. (호스팅이 $($spec.loader) 기본 파일을 깔아요)"
+        $o2 = New-Ctl Label 15 76 240 24 '② 호스팅이 알려 준 서버 주소'
+        $oAddr = New-Ctl TextBox 265 73 485 28; if ($h.provider -eq 'other') { $oAddr.Text = $h.address }
+        $o2b = New-Ctl Label 15 110 240 24 '    호스팅 관리 페이지 (있으면)'
+        $oPanel = New-Ctl TextBox 265 107 485 28; if ($h.provider -eq 'other') { $oPanel.Text = $h.panel }
+        $o3 = New-Ctl Label 15 146 735 66 ("③ [올릴 파일 만들기] → 압축 파일 하나를 만들어 드려요. 호스팅의 파일 관리자(File Manager)에서`n" +
+            "    world 폴더가 이미 있으면 먼저 지우고, 이 압축 파일을 서버 폴더에 올려서 풀어 주세요. (같은 이름은 덮어쓰기)`n" +
+            "    올리기 전에 이 PC의 월드를 자동으로 백업해요.")
+        $ob3 = New-Ctl Button 15 214 240 32 '올릴 파일 만들기'
+        $o4 = New-Ctl Label 15 256 735 44 "④ 호스팅 서버를 켜고 [▶ 확인하고 옮기기 끝내기]를 누르세요.`n    이 프로그램이 호스팅 서버에 접속해서 제대로 올라갔는지 확인해요."
+        $obGo = New-Ctl Button 15 304 330 44 '▶ 확인하고 옮기기 끝내기'; $obGo.Font = $bold; $obGo.BackColor = [Drawing.Color]::FromArgb(214, 240, 214)
+        $pOt.Controls.AddRange(@($o1, $o2, $oAddr, $o2b, $oPanel, $o3, $ob3, $o4, $obGo))
+        $lFriend.Text = ("친구들은: 처음 옮길 때만 [친구 초대 링크 복사]로 새 링크를 한 번 보내 주세요. (옮기고 나면 물어볼게요)`n" +
+            "그다음부터는 내 PC ↔ 호스팅을 오가도, 친구들은 [▶ 게임 켜기]만 누르면 알아서 새 주소를 찾아가요.`n" +
+            "(CurseForge 앱으로 하는 친구는 멀티플레이의 서버 주소만 새 주소로 바꾸면 돼요)")
+        $showPick = { $pEx.Visible = $rEx.Checked; $pWk.Visible = $rWk.Checked; $pOt.Visible = $rOt.Checked }
+        foreach ($rb in $rEx, $rWk, $rOt) { $rb.Add_CheckedChanged($showPick) }
+        switch ("$($h.provider)") { 'other' { $rOt.Checked = $true } 'wicked' { $rWk.Checked = $true } default { $rEx.Checked = $true } }
+        & $showPick
+        $eb1.Add_Click({ Open-Url 'https://exaroton.com/' })
+        $eb2.Add_Click({ Open-Url 'https://exaroton.com/account/' })
+        $ebs.Add_Click({
+                $k = $etk.Text.Trim(); if (-not $k -or $k -eq '(저장돼 있어요)') { Show-Msg '② 페이지에서 만든 API 키를 붙여 넣어 주세요.'; return }
+                if ($k -notmatch '^[A-Za-z0-9._-]{16,}$') { Show-Msg '키 모양이 아니에요. 영어와 숫자로 된 긴 글자를 그대로 복사해서 붙여 넣어 주세요.'; return }
+                Save-ExKey $k; $etk.Text = '(저장돼 있어요)'
+                $eb3.PerformClick()
+            })
+        $script:exList = @()
+        $eb3.Add_Click({
+                $f.Cursor = 'WaitCursor'; $ecb.Items.Clear(); $script:exList = @()
+                try { $script:exList = @(Invoke-ExApi 'GET' 'servers/' | Where-Object { $_ }) }
+                catch { $f.Cursor = 'Default'; Show-Msg $_.Exception.Message 'Warning'; return }
+                $f.Cursor = 'Default'
+                if (-not $script:exList.Count) { Show-Msg "exaroton 계정에 서버가 없어요. ①에서 서버를 먼저 만들어 주세요."; return }
+                foreach ($s in $script:exList) { [void]$ecb.Items.Add("$($s.name)   ($($s.address))") }
+                $ecb.SelectedIndex = 0
+                $lWork.Text = "서버 $($script:exList.Count)개를 불러왔어요. 옮길 서버를 고르고 ④를 누르세요."
+            })
+        $ebGo.Add_Click({
+                if ($ecb.SelectedIndex -lt 0) { Show-Msg '먼저 ③ [서버 불러오기]로 exaroton 서버를 골라 주세요.'; return }
+                $s = $script:exList[$ecb.SelectedIndex]
+                # The hosting must run the very same Minecraft and loader, or nothing on it will start
+                $sw = "$($s.software.name) $($s.software.version)"
+                if ($s.software -and ($sw -notmatch [regex]::Escape($spec.loader) -or $sw -notmatch [regex]::Escape($spec.mc))) {
+                    if (-not (Ask-YesNo "exaroton 서버의 Software가 '$sw' 로 되어 있어요.`n이 서버는 $($spec.loader) $($spec.lv) (마인크래프트 $($spec.mc))예요. 다르면 호스팅에서 안 켜져요.`n`nexaroton 사이트에서 Software를 바꾼 다음 [아니요] → 다시 [서버 불러오기].`n그래도 지금 옮길까요?")) { return }
+                }
+                if (-not (Ask-YesNo "'$name' 서버를 exaroton의 '$($s.name)'(으)로 옮길까요?`n`n- exaroton 서버에 있던 월드는 지워지고 이 PC의 월드로 바뀌어요.`n- 옮기는 동안(10~30분) 이 창을 닫지 마세요. 인터넷이 끊겨도 이 PC의 서버는 그대로예요.")) { return }
+                $pEx.Enabled = $false; $rEx.Enabled = $false; $rWk.Enabled = $false; $rOt.Enabled = $false; $f.Cursor = 'WaitCursor'
+                try { $ok = Move-ToExaroton $d $s $lWork } finally { $f.Cursor = 'Default'; $pEx.Enabled = $true; $rEx.Enabled = $true; $rWk.Enabled = $true; $rOt.Enabled = $true }
+                if (-not $ok) { return }
+                $script:hostingMoved = $true
+                $lWork.Text = "옮겼어요! 이제 '$name' 서버는 exaroton에서 돌아가요. 친구 주소: $(Get-ServerAddress $d)"
+                $f.Close()
+            })
+        $ob3.Add_Click({
+                $a = ConvertTo-PlayitAddress $oAddr.Text
+                if (-not $a) { Show-Msg "② 호스팅이 알려 준 서버 주소를 넣어 주세요. (예: play.example.com 또는 1.2.3.4:25565)"; return }
+                $pn = $oPanel.Text.Trim(); if ($pn -and -not (Test-ModUrl $pn)) { Show-Msg '호스팅 관리 페이지 주소는 https:// 로 시작하는 주소로 넣어 주세요. (없으면 비워 두세요)'; return }
+                $oAddr.Text = $a
+                $pOt.Enabled = $false; $f.Cursor = 'WaitCursor'
+                try { $zip = New-HostingZip $d 'other' $a $pn $lWork } finally { $f.Cursor = 'Default'; $pOt.Enabled = $true }
+                if (-not $zip) { return }
+                $lWork.Text = "만들었어요: $zip  → 호스팅에 올려서 푼 다음 서버를 켜고 ④를 누르세요."
+                Start-Process explorer.exe "/select,`"$zip`""
+                if ($pn) { Open-Url $pn }
+            })
+        $obGo.Add_Click({
+                $a = ConvertTo-PlayitAddress $oAddr.Text
+                if (-not $a) { Show-Msg '② 서버 주소를 넣어 주세요.'; return }
+                if (-not (Complete-ManualMove $d 'other' $a $oPanel.Text.Trim() $lWork)) { return }
+                $script:hostingMoved = $true
+                $f.Close()
+            })
+        # ---- Wicked ----
+        $wb1.Add_Click({ Open-Url $WickedPanel })
+        $wb2.Add_Click({ Open-Url "$($WickedPanel)account/api" })
+        $wbs.Add_Click({
+                $k = $wtk.Text.Trim(); if (-not $k -or $k -eq '(저장돼 있어요)') { Show-Msg '② 페이지에서 만든 API 키를 붙여 넣어 주세요.'; return }
+                if ($k -notmatch '^[A-Za-z0-9._-]{16,}$') { Show-Msg '키 모양이 아니에요. 위키드가 보여 준 긴 글자(ptlc_ 로 시작하는 경우가 많아요)를 그대로 복사해서 붙여 넣어 주세요.'; return }
+                Save-PtKey $k; $wtk.Text = '(저장돼 있어요)'
+                $wb3.PerformClick()
+            })
+        $script:ptList = @()
+        $wb3.Add_Click({
+                $f.Cursor = 'WaitCursor'; $wcb.Items.Clear(); $script:ptList = @()
+                try { $script:ptList = @(Get-PtServers | Where-Object { $_ }) }
+                catch { $f.Cursor = 'Default'; Show-Msg $_.Exception.Message 'Warning'; return }
+                $f.Cursor = 'Default'
+                if (-not $script:ptList.Count) { Show-Msg "위키드 계정에 서버가 없어요. 위키드 스토어에서 서버를 먼저 주문해 주세요."; return }
+                foreach ($s in $script:ptList) { [void]$wcb.Items.Add("$($s.name)   ($($s.address), 램 $([Math]::Round($s.ramMB / 1024))GB)") }
+                $pick = 0; for ($i = 0; $i -lt $script:ptList.Count; $i++) { if ($script:ptList[$i].id -eq $h.ptId) { $pick = $i } }
+                $wcb.SelectedIndex = $pick
+                $lWork.Text = "서버 $($script:ptList.Count)개를 불러왔어요. 옮길 서버를 고르고 ④를 누르세요."
+            })
+        $wbGo.Add_Click({
+                if ($wcb.SelectedIndex -lt 0) { Show-Msg '먼저 ③ [서버 불러오기]로 위키드 서버를 골라 주세요. (API 키가 없으면 아래의 [■ 서버 끄고 위키드용 파일 만들기]로 해요)'; return }
+                $s = $script:ptList[$wcb.SelectedIndex]
+                # The hosting must run the same Minecraft and a Forge at least as new as this PC's, or nothing on it will start
+                $f.Cursor = 'WaitCursor'; $fv = ''; try { $fv = Get-PtForge $s.id } catch { }; $f.Cursor = 'Default'
+                $need = "$($spec.mc)-$($spec.lv)"
+                if (-not $fv) {
+                    if (-not (Ask-YesNo "위키드 서버에 $($spec.loader)가 설치돼 있지 않은 것 같아요.`n①처럼 위키드 패널의 부가기능 → 버전에서 $($spec.loader) $($spec.mc) (빌드 $($spec.lv) 이상)을 먼저 설치해 주세요.`n`n그래도 지금 옮길까요?")) { return }
+                }
+                elseif (-not $fv.StartsWith("$($spec.mc)-") -or ($spec.lv -and (Compare-ModVersion ($fv.Substring($spec.mc.Length + 1)) $spec.lv) -lt 0)) {
+                    if (-not (Ask-YesNo "위키드 서버에는 $($spec.loader) $fv 가 설치돼 있어요. 이 서버는 $need 예요.`n마인크래프트 버전이 다르거나 $($spec.loader)가 더 옛날 거면 위키드에서 안 켜져요.`n`n위키드 패널의 부가기능 → 버전에서 다시 설치한 다음 [아니요].`n그래도 지금 옮길까요?")) { return }
+                }
+                if (-not (Ask-YesNo "'$name' 서버를 위키드의 '$($s.name)'(으)로 옮길까요?`n`n- 이 PC 서버가 켜져 있으면 먼저 꺼요.`n- 위키드 서버에 있던 월드는 지워지고 이 PC의 월드로 바뀌어요. 위키드의 $($spec.loader)는 그대로 둬요.`n- 옮기는 동안(10~30분) 이 창을 닫지 마세요. 인터넷이 끊겨도 이 PC의 서버는 그대로예요.")) { return }
+                $pWk.Enabled = $false; $rEx.Enabled = $false; $rWk.Enabled = $false; $rOt.Enabled = $false; $f.Cursor = 'WaitCursor'
+                try { $ok = Move-ToWicked $d $s $lWork } finally { $f.Cursor = 'Default'; $pWk.Enabled = $true; $rEx.Enabled = $true; $rWk.Enabled = $true; $rOt.Enabled = $true }
+                if (-not $ok) { return }
+                $script:hostingMoved = $true
+                $f.Close()
+            })
+        $wbAddr = {
+            # The address for the by-hand way: the server picked in ③, else what was saved, else asked
+            if ($wcb.SelectedIndex -ge 0) { return ConvertTo-PlayitAddress $script:ptList[$wcb.SelectedIndex].address }
+            $def = ''; if ($h.provider -eq 'wicked') { $def = $h.address }
+            $t0 = Ask-Text "위키드 서버 주소를 넣어 주세요.`n(위키드 패널의 서버 목록에 나오는 주소, 예: node4.teamwicked.me:12345)" $def
+            return ConvertTo-PlayitAddress $t0
+        }
+        $wbZip.Add_Click({
+                $a = & $wbAddr
+                if (-not $a) { Show-Msg '위키드 서버 주소가 없어요. 포트 번호까지 넣어 주세요. (예: node4.teamwicked.me:12345)'; return }
+                if (-not (Get-AddressPort $a)) { if (-not (Ask-YesNo "주소에 포트 번호(: 뒤의 숫자)가 없어요. 위키드는 서버마다 포트가 달라서, 없으면 친구들이 못 들어올 수 있어요.`n그래도 만들까요?")) { return } }
+                $pWk.Enabled = $false; $f.Cursor = 'WaitCursor'
+                try { $zip = New-HostingZip $d 'wicked' $a $WickedPanel $lWork } finally { $f.Cursor = 'Default'; $pWk.Enabled = $true }
+                if (-not $zip) { return }
+                $lWork.Text = "만들었어요: $zip"
+                Start-Process explorer.exe "/select,`"$zip`""
+                Show-Msg ("위키드에 올릴 파일을 만들었어요 (방금 열린 폴더).`n`n위키드 패널 → 서버 → 파일에서:`n" +
+                    "1. world 폴더와 mods 폴더가 있으면 지워요 (위키드가 만든 것)`n2. [대용량 업로드]로 이 압축 파일을 올려요`n" +
+                    "3. 올린 파일 오른쪽 … → [압축 해제] → 다 풀리면 압축 파일은 지워도 돼요`n4. 콘솔에서 [시작] → Done 이 나오면 [확인하고 옮기기 끝내기]`n`n" +
+                    "libraries, server.jar 같은 위키드의 $($spec.loader) 파일은 지우지 마세요.")
+                Open-Url $WickedPanel
+            })
+        $wbDone.Add_Click({
+                $a = & $wbAddr
+                if (-not $a) { Show-Msg '위키드 서버 주소를 넣어 주세요.'; return }
+                if (-not (Complete-ManualMove $d 'wicked' $a $WickedPanel $lWork)) { return }
+                $script:hostingMoved = $true
+                $f.Close()
+            })
+        $f.Controls.AddRange(@($t, $rEx, $rWk, $rOt, $pEx, $pWk, $pOt, $lWork, $lFriend))
+    }
+    else {
+        $prov = Get-ProviderName $h; $api = Test-ApiHosted $h
+        $where = ''; if ($h.exName) { $where = " '$($h.exName)'" }
+        $t = New-Ctl Label 15 12 735 66 "지금 '$name' 서버는 호스팅($prov$where)에서 돌아가요.`n($($h.since)부터)  친구 주소: $($h.address)"
+        $t.Font = New-Object Drawing.Font('Malgun Gothic', 10, [Drawing.FontStyle]::Bold)
+        $how = "켜고 끄기는 메인 화면의 [▶ 호스팅 켜기] / [■ 호스팅 끄기], 친구 추가는 [친구 추가]로 해요. ($prov에 바로 반영돼요)"
+        if (-not $api) { $how = "켜고 끄기는 $(Get-HostingSite $h)에서 해요. [친구 추가]를 누르면 호스팅 콘솔에 붙여 넣을 명령을 복사해 드려요." }
+        $s1 = New-Ctl Label 15 86 735 44 $how
+        $bSync = New-Ctl Button 15 136 330 36 '바뀐 모드·설정 올리기'
+        $bPanel = New-Ctl Button 355 136 260 36 '호스팅 사이트 열기'
+        $sb = New-Ctl Label 15 186 735 88 ''
+        $bBack = New-Ctl Button 15 280 400 44 '◀ 내 PC로 되돌리기'; $bBack.Font = $bold
+        if ($api) {
+            $sb.Text = ("내 PC로 되돌리면: 호스팅 서버를 끄고, 호스팅의 최신 월드와 화이트리스트를 이 PC로 가져와요.`n" +
+                "가져오기 전에 이 PC에 있던 옛 월드는 자동으로 백업해요. $prov 서버는 그대로 두니 언제든 다시 옮길 수 있어요.`n" +
+                "($prov 서버를 아예 안 쓸 거라면 $(Get-HostingSite $h)에서 지우거나 해지하면 돼요)")
+        }
+        else {
+            $sb.Text = ("내 PC로 되돌리기: ① 호스팅 서버를 끄고 ② 파일 관리자에서 world 폴더를 압축(zip)해서 받은 다음`n" +
+                "③ [◀ 받은 월드 zip 고르기]. 가져오기 전에 이 PC에 있던 옛 월드는 자동으로 백업해요.")
+            $bBack.Text = '◀ 받은 월드 zip 고르기 (내 PC로 되돌리기)'
+        }
+        $sNo = New-Ctl Label 15 340 735 44 "호스팅에서 한 게 없거나 호스팅이 망가졌다면, 호스팅 월드를 가져오지 않고 이 PC의 월드(옮기던 날 것)로 돌아갈 수도 있어요."
+        $sNo.ForeColor = [Drawing.Color]::DimGray
+        $bNo = New-Ctl Button 15 388 400 32 '월드는 안 가져오고 내 PC로 돌아가기'
+        $lFriend.Text = ("되돌린 다음 [▶ 친구랑 하기]로 켜면, 친구들은 [▶ 게임 켜기]만 누르면 알아서 이 PC로 들어와요.`n" +
+            "(CurseForge 앱으로 하는 친구는 멀티플레이의 서버 주소를 Playit 주소로 바꿔야 해요)")
+        $bSync.Add_Click({ $f.Cursor = 'WaitCursor'; try { Push-HostedChanges $d } finally { $f.Cursor = 'Default' } })
+        $bPanel.Add_Click({ if ($h.provider -eq 'exaroton') { Open-Url 'https://exaroton.com/servers/' } elseif ($h.provider -eq 'wicked') { Open-Url $WickedPanel } elseif ($h.panel) { Open-Url $h.panel } else { Show-Msg '호스팅 관리 페이지 주소를 저장하지 않았어요. 호스팅 사이트를 직접 열어 주세요.' } })
+        $bBack.Add_Click({
+                if ($api) {
+                    if (-not (Ask-YesNo "'$name' 서버를 내 PC로 되돌릴까요?`n호스팅 서버를 끄고 최신 월드를 받아 와요. (월드 크기에 따라 몇 분~30분)")) { return }
+                    $f.Controls | ForEach-Object { $_.Enabled = $false }; $lWork.Enabled = $true; $f.Cursor = 'WaitCursor'
+                    try { if ($h.provider -eq 'wicked') { $ok = Move-FromWicked $d $lWork } else { $ok = Move-FromExaroton $d $lWork } }
+                    finally { $f.Cursor = 'Default'; $f.Controls | ForEach-Object { $_.Enabled = $true } }
+                }
+                else {
+                    $o = New-Object Windows.Forms.OpenFileDialog; $o.Filter = '압축 파일 (*.zip)|*.zip'; $o.Title = '호스팅에서 받은 월드 압축 파일을 고르세요'
+                    $dl = Join-Path $env:USERPROFILE 'Downloads'; if (Test-Path -LiteralPath $dl) { $o.InitialDirectory = $dl }
+                    if ($o.ShowDialog($f) -ne 'OK') { return }
+                    if (-not (Ask-YesNo "이 파일의 월드로 내 PC의 월드를 바꿀까요?`n$($o.FileName)`n`n(이 PC에 있던 옛 월드는 먼저 백업해요)")) { return }
+                    $f.Cursor = 'WaitCursor'
+                    try { $ok = Move-FromZip $d $o.FileName $lWork } finally { $f.Cursor = 'Default' }
+                }
+                if (-not $ok) { return }
+                $script:hostingMoved = $true
+                Show-Msg ("'$name' 서버를 내 PC로 되돌렸어요.`n`n[▶ 친구랑 하기]로 켜면 친구들은 [▶ 게임 켜기]만 누르면 알아서 이 PC로 들어와요." +
+                    $(if ($h.provider -eq 'exaroton') { "`n`nexaroton 서버는 꺼진 채로 남아 있어요. (꺼져 있으면 저장 공간 값 월 10크레딧만 나가요)" } elseif ($h.provider -eq 'wicked') { "`n`n위키드 서버는 꺼진 채로 남아 있어요. (월정액이라 해지하기 전까지는 요금이 나가요)" } else { "`n`n호스팅 서버는 꺼 둔 채로 두세요." }))
+                $f.Close()
+            })
+        $bNo.Add_Click({
+                if (-not (Ask-YesNo "호스팅에서 한 것(그동안 지은 것, 모은 아이템)은 가져오지 않고, 이 PC에 있던 옮기던 날의 월드로 돌아가요.`n정말 그렇게 할까요?")) { return }
+                $hh = Get-Hosting $d; $hh.where = 'pc'; $hh.since = (Get-Date -Format 'yyyy-MM-dd HH:mm'); Save-Hosting $d $hh
+                Set-InviteMotd $d
+                $script:hostingMoved = $true
+                Show-Msg "내 PC로 돌아왔어요. 호스팅 서버는 꺼 두세요. (켜 둔 채로 두면 친구들이 그쪽으로 들어갈 수 있어요)"
+                $f.Close()
+            })
+        $f.Controls.AddRange(@($t, $s1, $bSync, $bPanel, $sb, $bBack, $sNo, $bNo, $lWork, $lFriend))
+    }
+    [void]$f.ShowDialog($form)
+    Show-SrvInfo
+    if ($script:hostingMoved -and (Test-Hosted $d)) {
+        $prov = Get-Hosting $d
+        if (Ask-YesNo ("'$name' 서버를 호스팅으로 옮겼어요. 친구 주소: $($prov.address)`n`n" +
+                "처음 옮긴 거라면 친구들 프로그램은 아직 새 주소를 몰라요. 새 초대 링크를 한 번 보내 주세요.`n(그다음부터는 오가도 알아서 찾아요)`n`n지금 새 초대 링크를 복사할까요?")) {
+            $lblStage.Text = Copy-Invite $d
+        }
+        if ((Test-ApiHosted $prov) -and (Ask-YesNo '지금 호스팅 서버를 켤까요?')) { Start-HostedServer $d }
+    }
+}
+$btnWhere.Add_Click({ Show-HostingSetup })
+
 # ---------------- Mods: add / remove ----------------
 function Get-AddedMods($d) { $a = Read-Json (Join-Path $d 'added-mods.json'); if ($a) { return @($a) } return @() }
 function Save-AddedMods($d, $list) { [IO.File]::WriteAllText((Join-Path $d 'added-mods.json'), (ConvertTo-Json -InputObject @($list) -Depth 4), $Utf8) }
@@ -1833,8 +2747,8 @@ function Update-FriendGuide($d) {
     $g = Join-Path $d '친구접속안내.txt'
     $text = ''; if (Test-Path -LiteralPath $g) { $text = [IO.File]::ReadAllText($g, $Cp949) }
     $text = ($text -replace '(?s)\r?\n\[ 추가 모드 \].*$', '').TrimEnd()
-    # Step 3 carries the Playit address once the host has saved it, so the copied guide is complete on its own
-    $addr = Get-PlayitAddress
+    # Step 3 carries the friends' address (Playit, or the hosting's) once there is one, so the copied guide is complete on its own
+    $addr = Get-ServerAddress $d
     $step3 = '3. 게임 실행 -> 멀티플레이 -> 서버 추가 -> 방장이 알려준 주소 입력'
     if ($addr) { $step3 = "3. 게임 실행 -> 멀티플레이 -> 서버 추가 -> 서버 주소에  $addr  입력" }
     $text = $text -replace '(?m)^3\. 게임 실행 -> 멀티플레이 -> 서버 추가 -> [^\r\n]*', $step3.Replace('$', '$$')
@@ -2095,7 +3009,7 @@ function Show-ModManager {
     & $refresh
     [void]$f.ShowDialog($form)
 }
-$btnMods.Add_Click({ Show-ModManager })
+$btnMods.Add_Click({ $d = Get-SelDir; $s0 = Get-HostedSig $d; Show-ModManager; Sync-HostedAfter $d $s0 })
 
 # ---------------- resource packs the host adds (game only: the server never loads them) ----------------
 function Get-AddedPacks($d) { return @(Read-JsonList (Join-Path $d 'added-packs.json')) }
@@ -2200,7 +3114,7 @@ function Show-PackManager {
     & $refresh
     [void]$f.ShowDialog($form)
 }
-$btnPacks.Add_Click({ Show-PackManager })
+$btnPacks.Add_Click({ $d = Get-SelDir; $s0 = Get-HostedSig $d; Show-PackManager; Sync-HostedAfter $d $s0 })
 
 # ---------------- Security check ----------------
 function ConvertFrom-PropEscape([string]$v) {
@@ -2461,9 +3375,9 @@ function Show-AddressReset {
 # server itself shows a connecting game anyway: address, modpack and mod list.
 $MotdSyncTag = 'mcsm-sync:'
 function Get-UserMotd([string]$m) { $i = $m.IndexOf("`n`n$MotdSyncTag"); if ($i -ge 0) { return $m.Substring(0, $i) }; return $m }
-function Set-InviteMotd($d) {
+function Set-InviteMotd($d, [string]$addr = $null) {
     $user = Get-UserMotd ([string](Get-Props $d)['motd']); if (-not $user.Trim()) { $user = Split-Path $d -Leaf }
-    $code = Get-JoinCode $d; if (-not $code) { return }
+    $code = Get-JoinCode $d $addr; if (-not $code) { return }
     # A modpack may set its description from a mod; this one still lands in server.properties, which is what most use
     Set-Props $d @{ 'motd' = "$user`n`n$MotdSyncTag$code" }
     $i = Read-Json (Join-Path $d 'server-info.json')
@@ -2484,14 +3398,28 @@ function Get-ChatText($o) {
     if ($o.PSObject.Properties['extra']) { foreach ($x in @($o.extra)) { $t += Get-ChatText $x } }
     return $t
 }
+function Resolve-McTarget([string]$hostName) {
+    # Like the game: an address without a port may name its real host and port in a _minecraft._tcp SRV record
+    # (Playit's joinmc.link and most hostings, exaroton included, work this way)
+    try {
+        $r = Resolve-DnsName -Name "_minecraft._tcp.$hostName" -Type SRV -QuickTimeout -ErrorAction Stop | Where-Object { $_.Type -eq 'SRV' } | Select-Object -First 1
+        if ($r -and $r.NameTarget -and $r.Port) { return @{ host = ([string]$r.NameTarget).TrimEnd('.'); port = [int]$r.Port } }
+    }
+    catch { }
+    return @{ host = $hostName; port = 25565 }
+}
 function Get-ServerDescription([string]$addr, [int]$timeoutMs = 5000) {
     # The status request a game's server list sends; nothing logs in
     $hostName = $addr; $port = 25565
     if ($addr -match '^(.+):(\d{1,5})$') { $hostName = $Matches[1]; $port = [int]$Matches[2] }
     if ($hostName -notmatch '^[A-Za-z0-9.-]+$') { return $null }
+    # The handshake names the address as typed (hostings route by it); the connection goes where SRV points
+    $toHost = $hostName; $toPort = $port
+    if ($addr -notmatch ':\d{1,5}$' -and $hostName -notmatch '^[0-9.]+$') { $t = Resolve-McTarget $hostName; $toHost = $t.host; $toPort = $t.port }
+    if ($toHost -notmatch '^[A-Za-z0-9.-]+$') { return $null }
     $c = New-Object Net.Sockets.TcpClient
     try {
-        $iar = $c.BeginConnect($hostName, $port, $null, $null)
+        $iar = $c.BeginConnect($toHost, $toPort, $null, $null)
         if (-not $iar.AsyncWaitHandle.WaitOne($timeoutMs)) { return $null }
         $c.EndConnect($iar); $st = $c.GetStream(); $st.ReadTimeout = $timeoutMs; $st.WriteTimeout = $timeoutMs
         $hb = [Text.Encoding]::UTF8.GetBytes($hostName)
@@ -3705,7 +4633,9 @@ function Start-HostGame {
         }
     }
     $script:gameJob = @{ gameDir = $gd }
-    Start-InstallJob "-Client -PackId $($i.pack) -VersionKey `"$($i.version)`" -Name `"$name`" -FromServer `"$d`" -GameDir `"$gd`" -Address 127.0.0.1 -GameRamGB $(Get-GameRam $sr)" 'game'
+    # A hosted server is reached at the hosting's address like everyone else's; the copy on this PC is not running
+    $me = '127.0.0.1'; if (Test-Hosted $d) { $me = Get-ServerAddress $d }
+    Start-InstallJob "-Client -PackId $($i.pack) -VersionKey `"$($i.version)`" -Name `"$name`" -FromServer `"$d`" -GameDir `"$gd`" -Address $me -GameRamGB $(Get-GameRam $sr)" 'game'
 }
 $btnPlay.Add_Click({ Start-HostGame })
 
@@ -3809,8 +4739,12 @@ function Get-VersionKey($d, $i) {
     catch { }
     return $i.version
 }
-function Get-JoinCode($d) {
+function Get-JoinCode($d, [string]$addr = $null) {
+    # $addr: the address friends should use now (default: wherever the server runs). Every other address the server
+    # has had goes along as 'alt', so a friend's copy still finds it after it moves between this PC and a hosting.
     $i = Read-Json (Join-Path $d 'server-info.json'); if (-not $i -or -not $i.pack) { return '' }
+    if ($null -eq $addr -or $addr -eq '') { $addr = Get-ServerAddress $d }
+    $alt = @(@((Get-PlayitAddress), [string](Get-Hosting $d).address) | Where-Object { $_ -and $_ -ne $addr } | Select-Object -Unique)
     # Jars added from disk that turned out to be Modrinth files travel under their Modrinth file name
     $mods = @(Get-AddedMods $d | Where-Object { $_.forClient -and $_.projectId } | ForEach-Object {
             $fn = $_.file; if ($_.PSObject.Properties['mrFile'] -and $_.mrFile) { $fn = $_.mrFile }
@@ -3825,7 +4759,8 @@ function Get-JoinCode($d) {
             $fn = $_.file; if ($_.PSObject.Properties['mrFile'] -and $_.mrFile) { $fn = $_.mrFile }
             if (Test-PackFileName $fn) { [ordered]@{ p = $_.projectId; f = $fn } }
         })
-    $o = [ordered]@{ v = 1; p = $i.pack; k = (Get-VersionKey $d $i); n = (Split-Path $d -Leaf); a = (Get-PlayitAddress); m = $mods; l = $links; r = $rps }
+    $o = [ordered]@{ v = 1; p = $i.pack; k = (Get-VersionKey $d $i); n = (Split-Path $d -Leaf); a = $addr; m = $mods; l = $links; r = $rps }
+    if ($alt.Count) { $o['alt'] = @($alt) }
     # The server runs a newer Forge/NeoForge than the pack's (a mod needed it): friends' games need at least that one too
     if ($i.PSObject.Properties['loaderMin'] -and "$($i.loaderMin)" -match $LoaderVersionPattern) { $o['fv'] = [string]$i.loaderMin; $o['fl'] = [string]$i.loader }
     # A pack the host added by hand is unknown to the friend's copy: the code carries it (CurseForge: just this version)
@@ -3855,6 +4790,10 @@ function Read-JoinCode([string]$text) {
     $c | Add-Member -NotePropertyName l -NotePropertyValue $okLinks -Force
     $fv = ''; if ($c.PSObject.Properties['fv'] -and "$($c.fv)" -match $LoaderVersionPattern) { $fv = [string]$c.fv }
     $c | Add-Member -NotePropertyName fv -NotePropertyValue $fv -Force
+    # Other addresses the server has had (this PC's Playit, a hosting): plain host names only, a handful at most
+    $alt = @(); if ($c.PSObject.Properties['alt']) { $alt = @(@($c.alt) | ForEach-Object { ConvertTo-PlayitAddress "$_" } | Where-Object { $_ } | Select-Object -Unique -First 4) }
+    $c | Add-Member -NotePropertyName alt -NotePropertyValue $alt -Force
+    if ($c.PSObject.Properties['a'] -and $c.a) { $a = ConvertTo-PlayitAddress "$($c.a)"; if (-not $a) { $a = '' }; $c | Add-Member -NotePropertyName a -NotePropertyValue $a -Force }
     return $c
 }
 function Test-ModUrl($u) { return "$u".Length -le 300 -and "$u" -match '^https://[A-Za-z0-9.-]+\.[A-Za-z]{2,}(:\d{1,5})?(/[^\s"<>`]*)?$' }
@@ -3876,7 +4815,8 @@ function Test-InvitePage {
 function Copy-Invite($d) {
     # Copies the invitation for server $d and returns a line saying what was copied
     if (-not $d) { return '왼쪽 목록에서 서버를 고르세요.' }
-    if (Get-PlayitKey) { [void](Sync-PlayitAddress) }
+    $hosted = Test-Hosted $d
+    if (-not $hosted -and (Get-PlayitKey)) { [void](Sync-PlayitAddress) }
     Update-FriendGuide $d
     $code = Get-JoinCode $d
     $left = @(Get-AddedMods $d | Where-Object { $_.forClient -and -not $_.projectId -and -not ($_.PSObject.Properties['sourceUrl'] -and (Test-ModUrl $_.sourceUrl)) })
@@ -3885,7 +4825,8 @@ function Copy-Invite($d) {
         # Nothing about the server is spelled out: the name and modpack only show once the link is opened
         $text = "[마인크래프트 서버 초대]`r`nPC에서 아래 링크를 열고 안내대로 하면 모드팩과 추가 모드까지 자동으로 깔려요.`r`n$InvitePage#$code"
         $note = '초대 링크를 복사했어요. 카톡이나 디스코드에 붙여 넣어 보내 주세요.'
-        if (-not (Get-PlayitAddress)) { $note += ' (Playit 주소가 아직 없어서 친구가 주소를 따로 물어봐야 해요)' }
+        if ($hosted) { $note += " (호스팅 주소 $(Get-ServerAddress $d) 가 들어 있어요)" }
+        elseif (-not (Get-PlayitAddress)) { $note += ' (Playit 주소가 아직 없어서 친구가 주소를 따로 물어봐야 해요)' }
     }
     else {
         $g = Join-Path $d '친구접속안내.txt'
@@ -3912,7 +4853,8 @@ function Find-ClipboardCode {
     if ($script:myCodes.ContainsKey($m.Value) -or $txtCode.Text.Contains($m.Value)) { return }
     $c = Read-JoinCode $m.Value; if (-not $c) { return }
     # The host's own invitation, copied in an earlier session: one of this PC's servers at this PC's address
-    if ((Test-Path -LiteralPath (Join-Path $ServersDir $c.n)) -and (-not $c.a -or $c.a -eq (Get-PlayitAddress))) { return }
+    $mine = Join-Path $ServersDir $c.n
+    if ((Test-Path -LiteralPath $mine) -and (-not $c.a -or $c.a -in @((Get-PlayitAddress), [string](Get-Hosting $mine).address))) { return }
     $tabs.SelectedTab = $tabJoin
     $txtCode.Text = $m.Value
     if ($script:joinCode) {
@@ -3994,6 +4936,7 @@ function Start-JoinGame($c, [string]$addr, [int]$ram, $modsB64 = $null, $packsB6
     $gd = Join-Path $GameRoot "join-$($c.n)"
     if (-not (Stop-GameIfRunning $gd)) { return }
     if (-not (Close-McLauncher)) { return }
+    Save-JoinAddresses $gd (@($addr) + @($c.alt))
     $mods = $modsB64; if ($null -eq $mods) { $mods = ConvertTo-ModsB64 $c.m }
     $rps = $packsB64; if ($null -eq $rps) { $rps = ConvertTo-ModsB64 $c.r 'zip' }
     # Mods only reachable by link: kept beside the game, so [▶ 게임 켜기] next time still knows them
@@ -4159,6 +5102,27 @@ $btnJoin.Add_Click({
         Start-JoinGame $script:joinCode $txtJAddr.Text ([int]$numJRam.Value)
     })
 $script:joined = @()
+function ConvertTo-JoinAddress([string]$a) { if ($a.Trim() -eq '127.0.0.1') { return '127.0.0.1' }; return ConvertTo-PlayitAddress $a }
+function Get-JoinAddresses([string]$gd) { return @(Read-JsonList (Join-Path $gd 'server-addresses.json') | ForEach-Object { ConvertTo-JoinAddress "$_" } | Where-Object { $_ }) }
+function Save-JoinAddresses([string]$gd, $list) {
+    # Every address this friend's server has had, newest first: the host can move it between a PC and a hosting,
+    # and the copy here keeps finding it as long as one of these still answers
+    $all = @(@(@($list) + @(Get-JoinAddresses $gd)) | ForEach-Object { ConvertTo-JoinAddress "$_" } | Where-Object { $_ } | Select-Object -Unique -First 6)
+    if (-not $all.Count) { return }
+    New-Item -ItemType Directory -Force $gd | Out-Null
+    [IO.File]::WriteAllText((Join-Path $gd 'server-addresses.json'), (ConvertTo-Json -InputObject @($all)), $Utf8)
+}
+function Find-HostAnywhere([string]$gdir, $m) {
+    # Asks each address the host's server has had; the first that answers with this server's invitation wins
+    $tried = @()
+    foreach ($a in @(@("$($m.address)") + @(Get-JoinAddresses $gdir)) | Where-Object { $_ } | Select-Object -Unique) {
+        $tried += $a
+        $txtJoinLog.AppendText("방장 서버 찾는 중... ($a)`r`n"); Pump 30
+        $c = Find-HostCode $a "$($m.name)"
+        if ($c) { return @{ code = $c; addr = $a; tried = $tried } }
+    }
+    return @{ code = $null; addr = "$($m.address)"; tried = $tried }
+}
 function Update-JoinedList {
     $lstJoined.Items.Clear(); $script:joined = @()
     foreach ($g in @(Get-ChildItem -LiteralPath $GameRoot -Directory -Filter 'join-*' -ErrorAction SilentlyContinue)) {
@@ -4176,10 +5140,24 @@ function Update-JoinedList {
 $btnJoinAgain.Add_Click({
         if ($lstJoined.SelectedIndex -lt 0) { Show-Msg '목록에서 친구 서버를 고르세요.'; return }
         $gdir = $script:joined[$lstJoined.SelectedIndex][0]; $m = $script:joined[$lstJoined.SelectedIndex][1]
-        # Ask the host's server what it runs now: changed mods are caught up here, without a new link
-        $txtJoinLog.AppendText("방장 서버에 바뀐 모드가 있는지 확인하는 중... ($($m.address))`r`n"); $form.Cursor = 'WaitCursor'; Pump 50
-        $new = Find-HostCode "$($m.address)" "$($m.name)"; $form.Cursor = 'Default'
-        $addr = "$($m.address)"; if ($new -and $new.a) { $addr = "$($new.a)" }
+        # Ask the host's server what it runs now: changed mods (and a new address, when it moved) are caught up here,
+        # without a new link. Every address it has had is tried, so moving between the host's PC and a hosting is seamless.
+        $form.Cursor = 'WaitCursor'; Pump 50
+        $found = Find-HostAnywhere $gdir $m; $form.Cursor = 'Default'
+        $new = $found.code; $addr = $found.addr
+        if ($new) {
+            if ($addr -ne "$($m.address)") { $txtJoinLog.AppendText("방장 서버가 새 주소로 옮겨 갔어요: $addr (알아서 바꿔 둘게요)`r`n") }
+            Save-JoinAddresses $gdir (@($addr, $new.a) + @($new.alt))
+        }
+        else {
+            # Starting the game anyway would only end at "can't connect" (or, if mods changed, a wall of errors)
+            $tried = ($found.tried | ForEach-Object { "  - $_" }) -join "`n"
+            $txtJoinLog.AppendText("방장 서버가 꺼져 있거나 확인할 수 없었어요.`r`n")
+            if (-not (Ask-YesNo ("방장 서버가 지금 꺼져 있는 것 같아요. (확인한 주소:`n$tried)`n`n" +
+                        "서버가 켜져 있어야 들어갈 수 있어요. 방장에게 켜 달라고 한 다음 다시 [▶ 게임 켜기]를 눌러 주세요.`n" +
+                        "(방장이 모드를 바꿨다면, 서버가 켜진 다음에 눌러야 알아서 맞춰져요)`n" +
+                        "(방장이 서버를 다른 곳으로 옮겼다면, 방장에게 새 초대 링크를 받아서 열면 돼요. 다시 설치하지 않아요)`n`n그래도 지금 게임만 켤까요?"))) { return }
+        }
         if ($m.kind -eq 'curseforge') {
             # Joined in 1.0.12-1.0.14, when CurseForge packs went through CurseForge's app: this program now sets the game up itself
             if (-not $new) { [Windows.Forms.Clipboard]::SetText($addr); Show-Msg "방장 서버가 꺼져 있거나 확인할 수 없었어요.`n`n방장 서버가 켜진 다음 다시 누르면 이 프로그램이 게임을 알아서 준비해요.`n(지금은 CurseForge 앱에서 '$($m.packName)'을(를) Play → 멀티플레이 → 서버 접속. 주소를 복사해 뒀어요: $addr)"; return }
@@ -4200,7 +5178,7 @@ $btnJoinAgain.Add_Click({
             }
             $txtJoinLog.AppendText("방장 서버와 모드가 같아요.`r`n")
         }
-        else { $txtJoinLog.AppendText("방장 서버가 꺼져 있거나 확인할 수 없어서 지난번 그대로 켜요.`r`n") }
+        else { $txtJoinLog.AppendText("지난번 그대로 켜요.`r`n") }
         # The same added-mods value as last time, untouched, so an unchanged game is recognised and left alone
         $c = [pscustomobject]@{ p = $m.pack; k = $m.versionKey; n = $m.name; fv = "$($m.loaderMin)" }
         $oldPacks = ''; if ($m.PSObject.Properties['addedPacks']) { $oldPacks = [string]$m.addedPacks }
@@ -4282,6 +5260,7 @@ $uiTimer.Add_Tick({
         Update-LiveBackup
         Update-BackupCopies
         Resume-Playit
+        Update-ExPoll
         $script:tick++
         if ($script:tick % 12 -eq 0) { Update-PlayitLabel }
         if ($script:tick % 8 -eq 4) { Watch-GameLogs }   # every 2 seconds: explain a failed connection while the error is on screen
